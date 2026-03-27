@@ -97,9 +97,12 @@ async def tool_create_note(
 
 
 def _download_to_temp(url: str, suffix: str) -> str:
-    """Download a URL to a temp file and return the local path."""
+    """Download a URL to a temp file and return the local path.
+
+    For Instagram/video URLs, uses yt-dlp with H.264 format preference.
+    For regular HTTP URLs (images), uses urllib.
+    """
     import tempfile
-    import urllib.request
 
     media_dir = Path(tempfile.gettempdir()) / "sammler-notes-media"
     media_dir.mkdir(exist_ok=True)
@@ -107,10 +110,45 @@ def _download_to_temp(url: str, suffix: str) -> str:
     filename = f"media-{os.getpid()}-{id(url)}{suffix}"
     filepath = media_dir / filename
 
-    logger.info("Downloading %s to %s", url[:80], filepath)
-    urllib.request.urlretrieve(url, str(filepath))
-    logger.info("Downloaded %d bytes", filepath.stat().st_size)
+    # Detect if this is a video URL that needs yt-dlp
+    is_video_url = any(x in url for x in ["instagram.com/reel", "instagram.com/p", "youtube.com", "tiktok.com"])
 
+    if is_video_url and suffix in (".mp4", ".mov", ".webm"):
+        logger.info("Downloading video via yt-dlp: %s", url[:80])
+        result = subprocess.run(
+            ["yt-dlp", "-o", str(filepath), "--force-overwrites",
+             "--merge-output-format", "mp4", url],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            logger.error("yt-dlp failed: %s", result.stderr[:200])
+            raise RuntimeError(f"yt-dlp download failed: {result.stderr[:100]}")
+
+        # Check codec — Apple Notes needs H.264, yt-dlp may produce VP9
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", str(filepath)],
+            capture_output=True, text=True, timeout=10,
+        )
+        if probe.returncode == 0 and "vp9" in probe.stdout.lower():
+            logger.info("Converting VP9 to H.264 for Apple Notes compatibility")
+            h264_path = filepath.with_suffix(".h264.mp4")
+            conv = subprocess.run(
+                ["ffmpeg", "-y", "-i", str(filepath), "-c:v", "libx264",
+                 "-c:a", "aac", "-movflags", "+faststart", str(h264_path)],
+                capture_output=True, text=True, timeout=120,
+            )
+            if conv.returncode == 0:
+                os.unlink(str(filepath))
+                os.rename(str(h264_path), str(filepath))
+                logger.info("Converted to H.264: %d bytes", filepath.stat().st_size)
+            else:
+                logger.warning("H.264 conversion failed, using original: %s", conv.stderr[:100])
+    else:
+        import urllib.request
+        logger.info("Downloading %s to %s", url[:80], filepath)
+        urllib.request.urlretrieve(url, str(filepath))
+
+    logger.info("Downloaded %d bytes", filepath.stat().st_size)
     return str(filepath)
 
 
