@@ -84,6 +84,8 @@ async def tool_create_note(
 ) -> dict:
     """[notes] Create a new note in Apple Notes (text only, no media).
 
+    Disambiguation: For Apple Notes (personal/recipes) → apple-notes. For blog drafts/newsletters → writings.
+
     Args:
         title: The title of the note.
         body: The body content of the note. Can contain HTML for formatting.
