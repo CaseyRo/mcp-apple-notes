@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     # Server configuration
     apple_notes_mcp_host: str = Field(
-        default="127.0.0.1",
+        default="0.0.0.0",
         description="Host address for the MCP server to bind to",
     )
     apple_notes_mcp_port: int = Field(

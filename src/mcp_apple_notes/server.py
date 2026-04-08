@@ -82,7 +82,7 @@ async def tool_create_note(
     body: str,
     folder: str = "Notes",
 ) -> dict:
-    """Create a new note in Apple Notes (text only, no media).
+    """[notes] Create a new note in Apple Notes (text only, no media).
 
     Args:
         title: The title of the note.
@@ -193,7 +193,7 @@ async def tool_create_recipe_note(
     image_url: str = "",
     video_url: str = "",
 ) -> dict:
-    """Create a recipe note in Apple Notes with optional image and video.
+    """[notes] Create a recipe note in Apple Notes with optional image and video.
 
     Uses the 'Sammler Recipe Note' macOS Shortcut to create a note with
     rich HTML content and media attachments. Media is downloaded from the
