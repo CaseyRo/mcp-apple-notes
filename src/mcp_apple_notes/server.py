@@ -58,7 +58,8 @@ def _create_server() -> FastMCP:
         "name": "Apple Notes",
         "instructions": (
             "MCP server for Apple Notes on macOS. "
-            "Create notes in any folder using the create-note tool."
+            "Create notes in any folder using the create-note tool. "
+            "This is a write-only server — it cannot search or read existing Apple Notes."
         ),
     }
 
