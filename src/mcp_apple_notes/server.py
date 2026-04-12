@@ -2,8 +2,8 @@
 """
 Apple Notes MCP Server.
 
-A minimal MCP server that exposes a single tool for creating notes
-in Apple Notes via AppleScript.
+Read, search, and create notes in Apple Notes via NoteStore SQLite
+and AppleScript.
 """
 
 import asyncio
@@ -14,12 +14,16 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Annotated, Literal
+
+from pydantic import Field
 
 from fastmcp import FastMCP
 from fastmcp.server.auth import AccessToken, TokenVerifier
 
 from .config import get_settings
-from .applescript_bridge import create_note
+from .applescript_bridge import create_note, move_note, delete_note
+from .notestore import NoteStoreReader
 
 logger = logging.getLogger("mcp_apple_notes")
 logging.basicConfig(
@@ -58,8 +62,11 @@ def _create_server() -> FastMCP:
         "name": "Apple Notes",
         "instructions": (
             "MCP server for Apple Notes on macOS. "
-            "Create notes in any folder using the create-note tool. "
-            "This is a write-only server — it cannot search or read existing Apple Notes."
+            "Read, search, and create notes. "
+            "Use list-folders and list-notes to browse, get-note for full content, "
+            "search-notes for keyword search, get-stats for overview. "
+            "Create notes with create-note or create-recipe-note. "
+            "Manage with move-note and delete-note."
         ),
     }
 
@@ -67,14 +74,24 @@ def _create_server() -> FastMCP:
         kwargs["auth"] = BearerTokenVerifier(settings.apple_notes_mcp_api_key)
         logger.info("Bearer token authentication enabled")
     else:
+        if settings.apple_notes_mcp_host not in ("127.0.0.1", "localhost", "::1"):
+            logger.critical(
+                "APPLE_NOTES_MCP_API_KEY is not set and host is %s — "
+                "refusing to start an unauthenticated server on a non-loopback address. "
+                "Set APPLE_NOTES_MCP_API_KEY or bind to 127.0.0.1.",
+                settings.apple_notes_mcp_host,
+            )
+            sys.exit(1)
         logger.warning(
-            "No APPLE_NOTES_MCP_API_KEY configured — server is running without authentication"
+            "No APPLE_NOTES_MCP_API_KEY configured — server is running without "
+            "authentication on loopback only"
         )
 
     return FastMCP(**kwargs)
 
 
 mcp = _create_server()
+_reader = NoteStoreReader(get_settings().db_path_resolved)
 
 
 @mcp.tool(name="create-note")
@@ -99,12 +116,219 @@ async def tool_create_note(
     return await asyncio.to_thread(create_note, title=title, body=body, folder=folder)
 
 
+# ------------------------------------------------------------------
+# Read tools (SQLite-backed)
+# ------------------------------------------------------------------
+
+
+@mcp.tool(name="list-folders")
+async def tool_list_folders() -> dict:
+    """[notes] List all folders in Apple Notes with note counts.
+
+    Returns:
+        A dict with a list of folders, each containing name, path, and note_count.
+    """
+    try:
+        folders = await asyncio.to_thread(_reader.list_folders)
+        return {"success": True, "folders": folders}
+    except Exception as e:
+        logger.exception("list-folders failed")
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(name="list-notes")
+async def tool_list_notes(
+    folder: str | None = None,
+    limit: Annotated[int, Field(ge=1, le=500)] = 50,
+    offset: Annotated[int, Field(ge=0)] = 0,
+    sort_by: Literal["modified", "created", "title"] = "modified",
+) -> dict:
+    """[notes] List notes with pagination and optional folder filter.
+
+    Args:
+        folder: Filter by folder name. Omit to list all folders.
+        limit: Maximum notes to return (default 50).
+        offset: Number of notes to skip for pagination.
+        sort_by: Sort order — "modified" (default), "created", or "title".
+
+    Returns:
+        A dict with notes list, total count, limit, and offset.
+    """
+    try:
+        result = await asyncio.to_thread(
+            _reader.list_notes, folder=folder, limit=limit, offset=offset, sort_by=sort_by
+        )
+        return {"success": True, **result}
+    except Exception as e:
+        logger.exception("list-notes failed")
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(name="list-tags")
+async def tool_list_tags() -> dict:
+    """[notes] List all hashtags used in Apple Notes with usage counts.
+
+    Returns:
+        A dict with a list of all tags, each with name and note_count.
+    """
+    try:
+        tags = await asyncio.to_thread(_reader.list_tags)
+        return {"success": True, "tags": tags, "total": len(tags)}
+    except Exception as e:
+        logger.exception("list-tags failed")
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(name="search-by-tag")
+async def tool_search_by_tag(tag: str, limit: Annotated[int, Field(ge=1, le=500)] = 50) -> dict:
+    """[notes] Find all notes with a specific hashtag.
+
+    For hashtag lookup, use this tool instead of search-notes (which searches body text only).
+
+    Args:
+        tag: The hashtag to search for (with or without leading #).
+        limit: Maximum results to return (default 50).
+
+    Returns:
+        A dict with matching notes.
+    """
+    try:
+        results = await asyncio.to_thread(_reader.search_by_tag, tag=tag, limit=limit)
+        return {"success": True, "results": results, "tag": tag, "total": len(results)}
+    except Exception as e:
+        logger.exception("search-by-tag failed")
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(name="get-note")
+async def tool_get_note(note_id: int) -> dict:
+    """[notes] Get the full content of a note by its ID.
+
+    The note_id is the numeric ID returned by list-notes or search-notes.
+    Returns the note body as plain text (extracted from the internal format),
+    with an AppleScript HTML-to-Markdown fallback for richer formatting.
+
+    Args:
+        note_id: The numeric note ID (Z_PK from list-notes results).
+
+    Returns:
+        A dict with note content, metadata, and formatting.
+    """
+    try:
+        result = await asyncio.to_thread(_reader.get_note, note_id=note_id)
+        return {"success": True, **result}
+    except Exception as e:
+        logger.exception("get-note failed")
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(name="search-notes")
+async def tool_search_notes(query: str, limit: Annotated[int, Field(ge=1, le=100)] = 20) -> dict:
+    """[notes] Full-text search across all Apple Notes.
+
+    Searches note titles and body text using keyword matching.
+    Results are ranked by relevance with snippet previews.
+    For hashtag lookup, use search-by-tag instead.
+
+    Args:
+        query: Search query (keywords).
+        limit: Maximum results to return (default 20).
+
+    Returns:
+        A dict with ranked search results including snippets.
+    """
+    try:
+        results = await asyncio.to_thread(_reader.search_notes, query=query, limit=limit)
+        return {"success": True, "results": results, "query": query}
+    except Exception as e:
+        logger.exception("search-notes failed")
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(name="get-stats")
+async def tool_get_stats() -> dict:
+    """[notes] Get Apple Notes statistics and overview.
+
+    Returns aggregate counts: total notes, folders, pinned notes,
+    notes with checklists, notes per folder, and date range.
+
+    Returns:
+        A dict with aggregate statistics.
+    """
+    try:
+        stats = await asyncio.to_thread(_reader.get_stats)
+        return {"success": True, **stats}
+    except Exception as e:
+        logger.exception("get-stats failed")
+        return {"success": False, "error": str(e)}
+
+
+# ------------------------------------------------------------------
+# Management tools (AppleScript-backed)
+# ------------------------------------------------------------------
+
+
+@mcp.tool(name="move-note")
+async def tool_move_note(note_id: int, folder: str) -> dict:
+    """[notes] Move a note to a different folder.
+
+    Uses the note's numeric ID (returned by list-notes, get-note, or search-notes).
+    Creates the target folder if it doesn't exist.
+
+    Args:
+        note_id: The numeric note ID (from note results).
+        folder: Destination folder name.
+
+    Returns:
+        A dict with success status.
+    """
+    try:
+        return await asyncio.to_thread(move_note, note_id=note_id, target_folder=folder)
+    except Exception as e:
+        logger.exception("move-note failed")
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(name="delete-note")
+async def tool_delete_note(note_id: int) -> dict:
+    """[notes] Delete a note (moves to Recently Deleted).
+
+    Uses the note's numeric ID (returned by list-notes, get-note, or search-notes).
+
+    Args:
+        note_id: The numeric note ID (from note results).
+
+    Returns:
+        A dict with success status.
+    """
+    try:
+        return await asyncio.to_thread(delete_note, note_id=note_id)
+    except Exception as e:
+        logger.exception("delete-note failed")
+        return {"success": False, "error": str(e)}
+
+
+def _validate_url(url: str) -> None:
+    """Validate that a URL uses an allowed scheme and host."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Disallowed URL scheme: {parsed.scheme!r}")
+    hostname = (parsed.hostname or "").lower()
+    if hostname in ("localhost", "127.0.0.1", "::1", "0.0.0.0") or hostname.startswith(
+        "169.254."
+    ):
+        raise ValueError("Disallowed URL host")
+
+
 def _download_to_temp(url: str, suffix: str) -> str:
     """Download a URL to a temp file and return the local path.
 
     For Instagram/video URLs, uses yt-dlp with H.264 format preference.
     For regular HTTP URLs (images), uses urllib.
     """
+    _validate_url(url)
     import tempfile
 
     media_dir = Path(tempfile.gettempdir()) / "sammler-notes-media"
@@ -158,7 +382,7 @@ def _download_to_temp(url: str, suffix: str) -> str:
 def _start_media_server(serve_dir: str, port: int = 18765) -> subprocess.Popen:
     """Start a tiny HTTP server in serve_dir, returns the process."""
     proc = subprocess.Popen(
-        [sys.executable, "-m", "http.server", str(port), "--directory", serve_dir],
+        [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", serve_dir],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
