@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.1] - 2026-04-12
+
+- feat: v0.3.0 — read, search, and tag tools via NoteStore SQLite
+
+
 ## [0.2.0] - 2026-04-09
 
 ### Changed

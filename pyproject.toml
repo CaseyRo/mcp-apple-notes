@@ -1,6 +1,6 @@
 [project]
 name = "mcp-apple-notes"
-version = "0.3.0"
+version = "0.3.1"
 description = "MCP server for Apple Notes — read, search, and create notes"
 readme = "README.md"
 requires-python = ">=3.11"
