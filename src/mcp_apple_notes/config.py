@@ -6,6 +6,7 @@ Settings are loaded once and cached for the lifetime of the application.
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +35,17 @@ class Settings(BaseSettings):
         default="",
         description="API key for authenticating MCP clients.",
     )
+
+    # NoteStore database path (for read/search tools)
+    apple_notes_db_path: str = Field(
+        default="~/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite",
+        description="Path to the NoteStore.sqlite database",
+    )
+
+    @property
+    def db_path_resolved(self) -> Path:
+        """Expand ~ and return the resolved NoteStore database path."""
+        return Path(self.apple_notes_db_path).expanduser()
 
     # Server configuration
     apple_notes_mcp_host: str = Field(
