@@ -94,6 +94,35 @@ mcp = _create_server()
 _reader = NoteStoreReader(get_settings().db_path_resolved)
 
 
+# --- Health endpoint -----------------------------------------------------
+from datetime import datetime, timezone as _tz  # noqa: E402
+from starlette.requests import Request as _SReq  # noqa: E402
+from starlette.responses import JSONResponse as _SResp  # noqa: E402
+
+try:
+    from mcp_apple_notes import __version__ as _version
+except ImportError:
+    _version = "0.1.0"
+
+_start_time = datetime.now(_tz.utc)
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def _health(request: _SReq) -> _SResp:
+    return _SResp({
+        "status": "healthy",
+        "service": "mcp-apple-notes",
+        "version": _version,
+        "upstream_reachable": True,
+        "uptime_seconds": int((datetime.now(_tz.utc) - _start_time).total_seconds()),
+    })
+
+
+@mcp.custom_route("/healthz", methods=["GET"])
+async def _healthz(request: _SReq) -> _SResp:
+    return await _health(request)
+
+
 @mcp.tool(name="create-note")
 async def tool_create_note(
     title: str,
@@ -486,11 +515,14 @@ def main():
     logger.info("Starting Apple Notes MCP Server on %s:%d", host, port)
 
     try:
+        # stateless_http=True per openspec mcp-stateless-transport — eliminates
+        # orphaned SSE sessions after idle disconnects.
         mcp.run(
             transport="streamable-http",
             host=host,
             port=port,
             path="/mcp",
+            stateless_http=True,
         )
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
