@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.2] - 2026-04-18
+
+- feat(reliability): stateless_http + /health + FastMCP 3.2.4
+
+
 ## [0.3.1] - 2026-04-12
 
 - feat: v0.3.0 — read, search, and tag tools via NoteStore SQLite
