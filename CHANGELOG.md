@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.5] - 2026-04-20
+
+- ci(deps): enable Dependabot weekly updates
+
+
 ## [0.3.4] - 2026-04-20
 
 - chore(deps): refresh uv.lock after pre-commit regen
