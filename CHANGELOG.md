@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.3] - 2026-04-20
+
+- chore(pkg): add __main__.py and py.typed per MCP Server Standards
+
+
 ## [0.3.2] - 2026-04-18
 
 - feat(reliability): stateless_http + /health + FastMCP 3.2.4
