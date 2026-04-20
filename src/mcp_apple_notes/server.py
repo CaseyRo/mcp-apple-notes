@@ -63,10 +63,10 @@ def _create_server() -> FastMCP:
         "instructions": (
             "MCP server for Apple Notes on macOS. "
             "Read, search, and create notes. "
-            "Use list-folders and list-notes to browse, get-note for full content, "
-            "search-notes for keyword search, get-stats for overview. "
-            "Create notes with create-note or create-recipe-note. "
-            "Manage with move-note and delete-note."
+            "Use list_folders and list_notes to browse, get_note for full content, "
+            "search_notes for keyword search, get_stats for overview. "
+            "Create notes with create_note or create_recipe_note. "
+            "Manage with move_note and delete_note."
         ),
     }
 
@@ -123,7 +123,7 @@ async def _healthz(request: _SReq) -> _SResp:
     return await _health(request)
 
 
-@mcp.tool(name="create-note")
+@mcp.tool(name="create_note")
 async def tool_create_note(
     title: str,
     body: str,
@@ -150,7 +150,7 @@ async def tool_create_note(
 # ------------------------------------------------------------------
 
 
-@mcp.tool(name="list-folders")
+@mcp.tool(name="list_folders")
 async def tool_list_folders() -> dict:
     """[notes] List all folders in Apple Notes with note counts.
 
@@ -161,11 +161,11 @@ async def tool_list_folders() -> dict:
         folders = await asyncio.to_thread(_reader.list_folders)
         return {"success": True, "folders": folders}
     except Exception as e:
-        logger.exception("list-folders failed")
+        logger.exception("list_folders failed")
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool(name="list-notes")
+@mcp.tool(name="list_notes")
 async def tool_list_notes(
     folder: str | None = None,
     limit: Annotated[int, Field(ge=1, le=500)] = 50,
@@ -189,11 +189,11 @@ async def tool_list_notes(
         )
         return {"success": True, **result}
     except Exception as e:
-        logger.exception("list-notes failed")
+        logger.exception("list_notes failed")
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool(name="list-tags")
+@mcp.tool(name="list_tags")
 async def tool_list_tags() -> dict:
     """[notes] List all hashtags used in Apple Notes with usage counts.
 
@@ -204,15 +204,15 @@ async def tool_list_tags() -> dict:
         tags = await asyncio.to_thread(_reader.list_tags)
         return {"success": True, "tags": tags, "total": len(tags)}
     except Exception as e:
-        logger.exception("list-tags failed")
+        logger.exception("list_tags failed")
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool(name="search-by-tag")
+@mcp.tool(name="search_by_tag")
 async def tool_search_by_tag(tag: str, limit: Annotated[int, Field(ge=1, le=500)] = 50) -> dict:
     """[notes] Find all notes with a specific hashtag.
 
-    For hashtag lookup, use this tool instead of search-notes (which searches body text only).
+    For hashtag lookup, use this tool instead of search_notes (which searches body text only).
 
     Args:
         tag: The hashtag to search for (with or without leading #).
@@ -225,20 +225,20 @@ async def tool_search_by_tag(tag: str, limit: Annotated[int, Field(ge=1, le=500)
         results = await asyncio.to_thread(_reader.search_by_tag, tag=tag, limit=limit)
         return {"success": True, "results": results, "tag": tag, "total": len(results)}
     except Exception as e:
-        logger.exception("search-by-tag failed")
+        logger.exception("search_by_tag failed")
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool(name="get-note")
+@mcp.tool(name="get_note")
 async def tool_get_note(note_id: int) -> dict:
     """[notes] Get the full content of a note by its ID.
 
-    The note_id is the numeric ID returned by list-notes or search-notes.
+    The note_id is the numeric ID returned by list_notes or search_notes.
     Returns the note body as plain text (extracted from the internal format),
     with an AppleScript HTML-to-Markdown fallback for richer formatting.
 
     Args:
-        note_id: The numeric note ID (Z_PK from list-notes results).
+        note_id: The numeric note ID (Z_PK from list_notes results).
 
     Returns:
         A dict with note content, metadata, and formatting.
@@ -247,17 +247,17 @@ async def tool_get_note(note_id: int) -> dict:
         result = await asyncio.to_thread(_reader.get_note, note_id=note_id)
         return {"success": True, **result}
     except Exception as e:
-        logger.exception("get-note failed")
+        logger.exception("get_note failed")
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool(name="search-notes")
+@mcp.tool(name="search_notes")
 async def tool_search_notes(query: str, limit: Annotated[int, Field(ge=1, le=100)] = 20) -> dict:
     """[notes] Full-text search across all Apple Notes.
 
     Searches note titles and body text using keyword matching.
     Results are ranked by relevance with snippet previews.
-    For hashtag lookup, use search-by-tag instead.
+    For hashtag lookup, use search_by_tag instead.
 
     Args:
         query: Search query (keywords).
@@ -270,11 +270,11 @@ async def tool_search_notes(query: str, limit: Annotated[int, Field(ge=1, le=100
         results = await asyncio.to_thread(_reader.search_notes, query=query, limit=limit)
         return {"success": True, "results": results, "query": query}
     except Exception as e:
-        logger.exception("search-notes failed")
+        logger.exception("search_notes failed")
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool(name="get-stats")
+@mcp.tool(name="get_stats")
 async def tool_get_stats() -> dict:
     """[notes] Get Apple Notes statistics and overview.
 
@@ -288,7 +288,7 @@ async def tool_get_stats() -> dict:
         stats = await asyncio.to_thread(_reader.get_stats)
         return {"success": True, **stats}
     except Exception as e:
-        logger.exception("get-stats failed")
+        logger.exception("get_stats failed")
         return {"success": False, "error": str(e)}
 
 
@@ -297,11 +297,11 @@ async def tool_get_stats() -> dict:
 # ------------------------------------------------------------------
 
 
-@mcp.tool(name="move-note")
+@mcp.tool(name="move_note")
 async def tool_move_note(note_id: int, folder: str) -> dict:
     """[notes] Move a note to a different folder.
 
-    Uses the note's numeric ID (returned by list-notes, get-note, or search-notes).
+    Uses the note's numeric ID (returned by list_notes, get_note, or search_notes).
     Creates the target folder if it doesn't exist.
 
     Args:
@@ -314,15 +314,15 @@ async def tool_move_note(note_id: int, folder: str) -> dict:
     try:
         return await asyncio.to_thread(move_note, note_id=note_id, target_folder=folder)
     except Exception as e:
-        logger.exception("move-note failed")
+        logger.exception("move_note failed")
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool(name="delete-note")
+@mcp.tool(name="delete_note")
 async def tool_delete_note(note_id: int) -> dict:
     """[notes] Delete a note (moves to Recently Deleted).
 
-    Uses the note's numeric ID (returned by list-notes, get-note, or search-notes).
+    Uses the note's numeric ID (returned by list_notes, get_note, or search_notes).
 
     Args:
         note_id: The numeric note ID (from note results).
@@ -333,7 +333,7 @@ async def tool_delete_note(note_id: int) -> dict:
     try:
         return await asyncio.to_thread(delete_note, note_id=note_id)
     except Exception as e:
-        logger.exception("delete-note failed")
+        logger.exception("delete_note failed")
         return {"success": False, "error": str(e)}
 
 
@@ -442,7 +442,7 @@ def _run_shortcut(payload: dict) -> dict:
     return {"success": True, "title": payload.get("title", "")}
 
 
-@mcp.tool(name="create-recipe-note")
+@mcp.tool(name="create_recipe_note")
 async def tool_create_recipe_note(
     title: str,
     body_html: str,
