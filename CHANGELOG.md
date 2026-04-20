@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.6] - 2026-04-20
+
+- feat(tools)!: rename all tool names from kebab-case to snake_case
+
+
 ## [0.3.5] - 2026-04-20
 
 - ci(deps): enable Dependabot weekly updates
