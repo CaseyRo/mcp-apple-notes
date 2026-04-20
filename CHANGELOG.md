@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.4] - 2026-04-20
+
+- chore(deps): refresh uv.lock after pre-commit regen
+
+
 ## [0.3.3] - 2026-04-20
 
 - chore(pkg): add __main__.py and py.typed per MCP Server Standards
