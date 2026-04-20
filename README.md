@@ -46,13 +46,13 @@ The server starts on `http://0.0.0.0:8010/mcp` using streamable-http transport.
 
 These tools query `NoteStore.sqlite` directly for fast, read-only access.
 
-#### `list-folders`
+#### `list_folders`
 
 List all folders with note counts and nested paths.
 
 **Returns:** `{ success, folders: [{ folder_id, name, path, note_count, identifier }] }`
 
-#### `list-notes`
+#### `list_notes`
 
 List notes with pagination and optional folder filter.
 
@@ -65,7 +65,7 @@ List notes with pagination and optional folder filter.
 
 **Returns:** `{ success, notes: [{ note_id, identifier, title, snippet, folder, created, modified, is_pinned, has_checklist }], total, limit, offset }`
 
-#### `get-note`
+#### `get_note`
 
 Get full content of a note by its numeric ID. Body is extracted from the internal protobuf format with an AppleScript HTML-to-Markdown fallback. Includes tags if present.
 
@@ -75,7 +75,7 @@ Get full content of a note by its numeric ID. Body is extracted from the interna
 
 **Returns:** `{ success, note_id, identifier, title, body, folder, tags, created, modified, is_pinned, has_checklist }`
 
-#### `search-notes`
+#### `search_notes`
 
 Full-text keyword search across note titles and bodies using SQLite FTS5 with BM25 ranking. The FTS index is built in-memory on first search and rebuilt automatically when `NoteStore.sqlite` changes.
 
@@ -86,7 +86,7 @@ Full-text keyword search across note titles and bodies using SQLite FTS5 with BM
 
 **Returns:** `{ success, results: [{ note_id, identifier, title, snippet, folder, rank, created, modified, is_pinned }], query }`
 
-#### `get-stats`
+#### `get_stats`
 
 Aggregate statistics: total notes, folders, pinned count, checklist count, notes per folder, date range.
 
@@ -96,13 +96,13 @@ Aggregate statistics: total notes, folders, pinned count, checklist count, notes
 
 Tags in Apple Notes are stored as `ICInlineAttachment` entities in the protobuf layer, linked to notes via the `ZNOTE1` foreign key. These tools provide read-only access to tag data.
 
-#### `list-tags`
+#### `list_tags`
 
 List all hashtags with usage counts.
 
 **Returns:** `{ success, tags: [{ tag, identifier, note_count }], total }`
 
-#### `search-by-tag`
+#### `search_by_tag`
 
 Find all notes with a specific hashtag.
 
@@ -114,7 +114,7 @@ Find all notes with a specific hashtag.
 
 ### Write tools (AppleScript-backed)
 
-#### `create-note`
+#### `create_note`
 
 Create a new note in Apple Notes.
 
@@ -126,7 +126,7 @@ Create a new note in Apple Notes.
 
 **Returns:** `{ success, note_id, title, folder }`
 
-#### `create-recipe-note`
+#### `create_recipe_note`
 
 Create a recipe note with optional image and video via the "Sammler Recipe Note" macOS Shortcut.
 
@@ -141,7 +141,7 @@ Create a recipe note with optional image and video via the "Sammler Recipe Note"
 
 ### Management tools (AppleScript-backed)
 
-#### `move-note`
+#### `move_note`
 
 Move a note to a different folder. Creates the folder if it doesn't exist.
 
@@ -152,7 +152,7 @@ Move a note to a different folder. Creates the folder if it doesn't exist.
 
 **Returns:** `{ success, note_id, folder }`
 
-#### `delete-note`
+#### `delete_note`
 
 Move a note to Recently Deleted.
 
@@ -187,7 +187,7 @@ Move a note to Recently Deleted.
           └─ FTS5 index (:memory:, rebuilt on mtime change)
 ```
 
-All read tools query `NoteStore.sqlite` directly in read-only mode (`?mode=ro`). Write and management tools use AppleScript subprocess calls. The `create-recipe-note` tool uses the macOS Shortcuts framework.
+All read tools query `NoteStore.sqlite` directly in read-only mode (`?mode=ro`). Write and management tools use AppleScript subprocess calls. The `create_recipe_note` tool uses the macOS Shortcuts framework.
 
 ### NoteStore.sqlite
 
