@@ -49,8 +49,10 @@ class Settings(BaseSettings):
 
     # Server configuration
     apple_notes_mcp_host: str = Field(
-        default="0.0.0.0",
-        description="Host address for the MCP server to bind to",
+        default="127.0.0.1",
+        description="Host address for the MCP server to bind to (native-process "
+        "deployment — the cloudflared tunnel hits localhost, so exposing on "
+        "all interfaces is never necessary)",
     )
     apple_notes_mcp_port: int = Field(
         default=8010,
