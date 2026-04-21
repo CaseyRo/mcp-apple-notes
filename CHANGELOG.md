@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.7] - 2026-04-21
+
+- fix(security): SecretStr for apple_notes_mcp_api_key
+
+
 ## [0.3.6] - 2026-04-20
 
 - feat(tools)!: rename all tool names from kebab-case to snake_case
