@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.8] - 2026-04-21
+
+- fix(security): change host default from 0.0.0.0 to 127.0.0.1
+
+
 ## [0.3.7] - 2026-04-21
 
 - fix(security): SecretStr for apple_notes_mcp_api_key
