@@ -8,7 +8,7 @@ Settings are loaded once and cached for the lifetime of the application.
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     )
 
     # Server authentication (inbound from MCP clients)
-    apple_notes_mcp_api_key: str = Field(
-        default="",
+    apple_notes_mcp_api_key: SecretStr = Field(
+        default=SecretStr(""),
         description="API key for authenticating MCP clients.",
     )
 
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     @property
     def has_api_key(self) -> bool:
         """Check if a server API key is configured."""
-        return bool(self.apple_notes_mcp_api_key)
+        return bool(self.apple_notes_mcp_api_key.get_secret_value())
 
 
 @lru_cache(maxsize=1)

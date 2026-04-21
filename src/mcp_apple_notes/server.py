@@ -71,7 +71,7 @@ def _create_server() -> FastMCP:
     }
 
     if settings.has_api_key:
-        kwargs["auth"] = BearerTokenVerifier(settings.apple_notes_mcp_api_key)
+        kwargs["auth"] = BearerTokenVerifier(settings.apple_notes_mcp_api_key.get_secret_value())
         logger.info("Bearer token authentication enabled")
     else:
         if settings.apple_notes_mcp_host not in ("127.0.0.1", "localhost", "::1"):
