@@ -493,6 +493,13 @@ async def tool_create_recipe_note(
                 payload["videoPath"] = f"http://127.0.0.1:18765/{Path(vid_file).name}"
 
         result = await asyncio.to_thread(_run_shortcut, payload)
+        if result.get("success"):
+            # Augment the shortcut result with an applenotes:// deep-link.
+            # _run_shortcut has no access to the note's ZIDENTIFIER; look it up
+            # from NoteStore.sqlite now that the Shortcut has completed.
+            from .applescript_bridge import _build_note_url
+            url = await asyncio.to_thread(_build_note_url, title, "Recipes")
+            result["url"] = url
         return result
 
     finally:

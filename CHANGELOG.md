@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.9] - 2026-05-03
+
+- fix(threading): use `threading.local()` for the FTS in-memory SQLite connection so each FastMCP thread-pool worker gets its own connection; eliminates `ProgrammingError: SQLite objects created in a thread can only be used in that same thread` on `search_notes` / `delete_note` and all tools that touched the FTS cache across thread hops
+- fix(url): `create_note` and `create_recipe_note` now return `applenotes://showNote?identifier=<UUID>` instead of a bare `applenotes://` — identifier is resolved from NoteStore.sqlite with a 3-second retry window to accommodate Apple Notes' async WAL flush
+
+
 ## [0.3.8] - 2026-04-21
 
 - fix(security): change host default from 0.0.0.0 to 127.0.0.1
