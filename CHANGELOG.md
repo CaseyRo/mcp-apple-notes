@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.10] - 2026-05-04
+
+- fix(threading,url): per-thread FTS connections + applenotes:// deep-link
+
+
 ## [0.3.9] - 2026-05-03
 
 - fix(threading): use `threading.local()` for the FTS in-memory SQLite connection so each FastMCP thread-pool worker gets its own connection; eliminates `ProgrammingError: SQLite objects created in a thread can only be used in that same thread` on `search_notes` / `delete_note` and all tools that touched the FTS cache across thread hops
