@@ -62,5 +62,5 @@ mcp-apple-notes = "mcp_apple_notes.server:main"
 dev = [
     "pytest>=7.0.0",
     "ruff>=0.1.0",
-    "build>=0.10.0",
+    "build>=1.5.0",
 ]
