@@ -7,6 +7,7 @@ Provides functions to interact with Apple Notes via osascript.
 import re
 import subprocess
 import logging
+import time
 from typing import Union
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,41 @@ def escape_applescript_string(text: str) -> str:
     return cleaned.replace('"', '""')
 
 
+def _build_note_url(title: str, folder: str | None = None) -> str:
+    """Look up the ZIDENTIFIER of a newly-created note and build a deep-link.
+
+    Retries for up to 3 seconds because Apple Notes may not flush the new row
+    to NoteStore.sqlite immediately after the AppleScript/Shortcut create
+    completes.
+
+    Returns ``applenotes://showNote?identifier=<UUID>`` on success,
+    or ``applenotes://`` if the identifier cannot be found (partial success).
+    """
+    from .config import get_settings
+    from .notestore import NoteStoreReader
+
+    reader = NoteStoreReader(get_settings().db_path_resolved)
+
+    deadline = time.monotonic() + 3.0
+    identifier: str | None = None
+    while time.monotonic() < deadline:
+        identifier = reader.find_note_identifier_by_title(title=title, folder=folder)
+        if identifier:
+            break
+        time.sleep(0.25)
+
+    if identifier:
+        return f"applenotes://showNote?identifier={identifier}"
+
+    logger.warning(
+        "Could not find ZIDENTIFIER for note '%s' in folder '%s' within 3 s — "
+        "returning bare applenotes:// URL",
+        title,
+        folder,
+    )
+    return "applenotes://"
+
+
 def create_note(title: str, body: str, folder: str = "Notes") -> dict:
     """Create a note in Apple Notes.
 
@@ -121,15 +157,21 @@ end tell
 
     # Parse integer note_id from CoreData URI (x-coredata://UUID/ICNote/pNNN)
     note_uri = str(result)
-    note_id = note_uri
+    note_id: int | str = note_uri
     if "/ICNote/p" in note_uri:
         note_id = int(note_uri.split("/ICNote/p")[1])
+
+    # Build an applenotes://showNote?identifier=<UUID> deep-link by looking up
+    # the ZIDENTIFIER from NoteStore.sqlite.  Apple Notes may not flush the row
+    # to disk immediately, so we retry for up to 3 seconds.
+    url = _build_note_url(title=title, folder=folder)
 
     return {
         "success": True,
         "note_id": note_id,
         "title": title,
         "folder": folder,
+        "url": url,
     }
 
 

@@ -39,7 +39,10 @@ class NoteStoreReader:
 
     def __init__(self, db_path: Path):
         self._db_path = db_path
-        self._fts_conn: sqlite3.Connection | None = None
+        # Per-thread FTS connection cache — each thread needs its own sqlite3.Connection
+        # because SQLite objects created on one thread cannot be used on another (the
+        # default check_same_thread=True raises ProgrammingError across thread-pool hops).
+        self._fts_local = threading.local()
         self._fts_mtime: float = 0.0
         self._fts_lock = threading.Lock()
 
@@ -552,28 +555,47 @@ class NoteStoreReader:
     # ------------------------------------------------------------------
 
     def _ensure_fts_index(self) -> sqlite3.Connection:
-        """Build or rebuild the in-memory FTS5 index if NoteStore changed."""
+        """Build or rebuild the in-memory FTS5 index if NoteStore changed.
+
+        Each thread gets its own in-memory SQLite connection stored in
+        ``self._fts_local``.  SQLite connections created on one thread cannot be
+        used on another (``check_same_thread=True`` is the default), so sharing a
+        single ``self._fts_conn`` across FastMCP's thread-pool workers causes
+        ``ProgrammingError: SQLite objects created in a thread can only be used in
+        that same thread``.  Using ``threading.local()`` gives every worker its own
+        copy and eliminates that error without loosening SQLite's safety guarantees.
+
+        The global ``_fts_mtime`` tracks when the canonical NoteStore file last
+        changed.  When the mtime advances, all threads discard their stale
+        connections and rebuild on their next call.
+        """
         try:
             current_mtime = os.path.getmtime(self._db_path)
         except OSError:
             current_mtime = 0.0
 
-        if self._fts_conn and current_mtime == self._fts_mtime:
-            return self._fts_conn
+        # Fast path: this thread already has a valid connection for the current mtime
+        thread_conn: sqlite3.Connection | None = getattr(self._fts_local, "conn", None)
+        thread_mtime: float = getattr(self._fts_local, "mtime", -1.0)
+        if thread_conn is not None and thread_mtime == current_mtime:
+            return thread_conn
 
         with self._fts_lock:
-            # Double-check after acquiring lock
-            if self._fts_conn and current_mtime == self._fts_mtime:
-                return self._fts_conn
+            # Re-read mtime inside the lock — another thread may have just rebuilt
+            # and advanced self._fts_mtime while we were waiting.
+            try:
+                current_mtime = os.path.getmtime(self._db_path)
+            except OSError:
+                current_mtime = 0.0
 
-            # Rebuild
-            if self._fts_conn:
+            # Close stale thread-local connection if it exists
+            if thread_conn is not None:
                 try:
-                    self._fts_conn.close()
+                    thread_conn.close()
                 except Exception:
                     pass
 
-            logger.info("Building FTS index (NoteStore mtime changed)")
+            logger.info("Building FTS index for thread %d (NoteStore mtime changed)", threading.get_ident())
             fts_conn = sqlite3.connect(":memory:")
             fts_conn.execute(
                 """
@@ -619,7 +641,9 @@ class NoteStoreReader:
             finally:
                 conn.close()
 
-            self._fts_conn = fts_conn
+            # Store in thread-local so this thread can reuse it
+            self._fts_local.conn = fts_conn
+            self._fts_local.mtime = current_mtime
             self._fts_mtime = current_mtime
             logger.info("FTS index built: %d notes indexed", len(rows))
             return fts_conn
@@ -699,3 +723,51 @@ class NoteStoreReader:
                 }
             )
         return results
+
+    # ------------------------------------------------------------------
+    # Post-create identifier lookup (for building applenotes:// deep links)
+    # ------------------------------------------------------------------
+
+    def find_note_identifier_by_title(self, title: str, folder: str | None = None) -> str | None:
+        """Return the ZIDENTIFIER (UUID) of the most-recently-created note matching *title*.
+
+        Used right after an AppleScript/Shortcut create to obtain the UUID needed
+        for an ``applenotes://showNote?identifier=<UUID>`` deep-link.
+
+        Args:
+            title: Exact note title to match (case-sensitive, per Apple Notes behaviour).
+            folder: Optional folder name to narrow the match.  Pass the folder used
+                    when creating the note to avoid returning a same-titled note from
+                    a different folder.
+
+        Returns:
+            The ZIDENTIFIER string, or ``None`` if no match is found within 5 seconds
+            of calling (NoteStore may not have flushed the new row yet — callers should
+            retry briefly or tolerate a ``None`` result).
+        """
+        conn = self._connect()
+        try:
+            where = ["n.Z_ENT = ?", "n.ZMARKEDFORDELETION = 0", "n.ZTITLE1 = ?"]
+            params: list = [_ENT_NOTE, title]
+
+            if folder:
+                where.append("f.ZTITLE2 = ?")
+                params.append(folder)
+
+            where_sql = " AND ".join(where)
+
+            row = conn.execute(
+                f"""
+                SELECT n.ZIDENTIFIER
+                FROM ZICCLOUDSYNCINGOBJECT n
+                LEFT JOIN ZICCLOUDSYNCINGOBJECT f
+                    ON f.Z_PK = n.ZFOLDER AND f.Z_ENT = {_ENT_FOLDER}
+                WHERE {where_sql}
+                ORDER BY n.ZCREATIONDATE3 DESC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+            return row["ZIDENTIFIER"] if row else None
+        finally:
+            conn.close()
