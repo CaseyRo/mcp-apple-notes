@@ -32,6 +32,9 @@ jobs:
       - name: Install
         run: uv sync
 
+      - name: Security audit (pip-audit)
+        run: uvx pip-audit
+
       - name: Bump version
         id: version
         run: |
