@@ -16,9 +16,10 @@ import sys
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server.auth import AccessToken, TokenVerifier
 
 from .config import get_settings
@@ -61,12 +62,26 @@ def _create_server() -> FastMCP:
     kwargs: dict = {
         "name": "Apple Notes",
         "instructions": (
-            "MCP server for Apple Notes on macOS. "
-            "Read, search, and create notes. "
-            "Use list_folders and list_notes to browse, get_note for full content, "
-            "search_notes for keyword search, get_stats for overview. "
-            "Create notes with create_note or create_recipe_note. "
-            "Manage with move_note and delete_note."
+            "MCP server for Apple Notes on macOS. Reads come straight from "
+            "NoteStore.sqlite (read-only, sub-100ms); writes go through "
+            "AppleScript / Shortcuts.\n\n"
+            "Orientation first — prefer the ambient resources over a tool call:\n"
+            "  notes://stats    overview counts + notes-per-folder\n"
+            "  notes://folders  the folder tree with note counts\n"
+            "  notes://tags     every hashtag with usage counts\n\n"
+            "Picking a tool:\n"
+            "  - Browse: list_folders, then list_notes(folder=...) (paginated).\n"
+            "  - Keyword lookup in titles/bodies: search_notes (FTS5, BM25-ranked).\n"
+            "  - Hashtag lookup: search_by_tag (NOT search_notes — bodies don't\n"
+            "    contain the literal #tag).\n"
+            "  - Read one note in full: get_note(note_id) using a numeric note_id\n"
+            "    from any list/search result.\n"
+            "  - Create plain text: create_note. Create a rich recipe note with\n"
+            "    image/video attachments: create_recipe_note.\n"
+            "  - Reorganize: move_note. Remove: delete_note (-> Recently Deleted).\n\n"
+            "All note_id values are the numeric Z_PK from NoteStore; identifiers "
+            "are UUIDs used for applenotes:// deep-links. Read tools are "
+            "side-effect-free; delete_note is the only destructive tool."
         ),
     }
 
@@ -92,6 +107,143 @@ def _create_server() -> FastMCP:
 
 mcp = _create_server()
 _reader = NoteStoreReader(get_settings().db_path_resolved)
+
+
+# --- Structured output models -------------------------------------------
+# These mirror the dict shapes the NoteStoreReader already returns, so the
+# top-level fields clients depend on are preserved while fastmcp now advertises
+# an output schema. extra="allow" keeps the models forward-compatible if the
+# reader gains fields. Optional fields default to None so partial reader rows
+# (e.g. missing identifier on a stale FTS hit) never raise.
+
+
+class _Model(BaseModel):
+    model_config = {"extra": "allow"}
+
+
+class FolderInfo(_Model):
+    """A single Apple Notes folder with its note count and nesting path."""
+
+    folder_id: int
+    name: str
+    path: str
+    note_count: int
+    identifier: str | None = None
+
+
+class FolderList(_Model):
+    """All non-trash folders in Apple Notes."""
+
+    folders: list[FolderInfo]
+
+
+class NoteSummary(_Model):
+    """Lightweight note record (no body) as returned by listings."""
+
+    note_id: int
+    identifier: str | None = None
+    title: str
+    snippet: str = ""
+    folder: str = ""
+    created: str | None = None
+    modified: str | None = None
+    is_pinned: bool = False
+    has_checklist: bool = False
+
+
+class NoteList(_Model):
+    """A paginated page of note summaries."""
+
+    notes: list[NoteSummary]
+    total: int
+    limit: int
+    offset: int
+
+
+class NoteDetail(_Model):
+    """A single note with its full extracted body and tags."""
+
+    note_id: int
+    identifier: str | None = None
+    title: str
+    body: str
+    body_source: str
+    folder: str = ""
+    tags: list[str] = Field(default_factory=list)
+    created: str | None = None
+    modified: str | None = None
+    is_pinned: bool = False
+    has_checklist: bool = False
+
+
+class TagInfo(_Model):
+    """A hashtag with its usage count."""
+
+    tag: str
+    identifier: str | None = None
+    note_count: int
+
+
+class TagList(_Model):
+    """All hashtags used across Apple Notes."""
+
+    tags: list[TagInfo]
+    total: int
+
+
+class TagSearchResult(_Model):
+    """Notes carrying a given hashtag."""
+
+    results: list[NoteSummary]
+    tag: str
+    total: int
+
+
+class SearchHit(NoteSummary):
+    """A full-text search hit, adding the BM25 relevance rank."""
+
+    rank: float | None = None
+
+
+class SearchResult(_Model):
+    """Ranked full-text search results for a query."""
+
+    results: list[SearchHit]
+    query: str
+
+
+class FolderCount(_Model):
+    """Per-folder note count used in stats."""
+
+    folder: str
+    count: int
+
+
+class StatsResult(_Model):
+    """Aggregate Apple Notes statistics and overview."""
+
+    total_notes: int
+    total_folders: int
+    pinned_notes: int
+    notes_with_checklists: int
+    notes_per_folder: list[FolderCount]
+    oldest_note: str | None = None
+    newest_modification: str | None = None
+
+
+class WriteResult(_Model):
+    """Result of a create/move/delete operation.
+
+    Preserves the historical ``{success, note_id, ...}`` envelope so existing
+    clients and the Cloudflare portal keep working; ``url`` is the
+    ``applenotes://`` deep-link when available.
+    """
+
+    success: bool
+    note_id: int | str | None = None
+    title: str | None = None
+    folder: str | None = None
+    url: str | None = None
 
 
 # --- Health endpoint -----------------------------------------------------
@@ -123,12 +275,24 @@ async def _healthz(request: _SReq) -> _SResp:
     return await _health(request)
 
 
-@mcp.tool(name="create_note")
+@mcp.tool(
+    name="create_note",
+    title="Create Note",
+    tags={"write"},
+    annotations={
+        "title": "Create Note",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
 async def tool_create_note(
     title: str,
     body: str,
     folder: str = "Notes",
-) -> dict:
+    ctx: Context | None = None,
+) -> WriteResult:
     """[notes] Create a new note in Apple Notes (text only, no media).
 
     Disambiguation: For Apple Notes (personal/recipes) → apple-notes. For blog drafts/newsletters → writings.
@@ -140,9 +304,17 @@ async def tool_create_note(
                 does not exist. Defaults to "Notes".
 
     Returns:
-        A dict with success status, note_id, title, and folder.
+        A WriteResult with success status, note_id, title, folder, and an
+        applenotes:// deep-link url.
     """
-    return await asyncio.to_thread(create_note, title=title, body=body, folder=folder)
+    if ctx is not None:
+        await ctx.info(f"Creating note {title!r} in folder {folder!r}")
+    try:
+        result = await asyncio.to_thread(create_note, title=title, body=body, folder=folder)
+    except Exception as e:
+        logger.exception("create_note failed")
+        raise ToolError(f"Failed to create note {title!r}: {e}") from e
+    return WriteResult(**result)
 
 
 # ------------------------------------------------------------------
@@ -150,28 +322,48 @@ async def tool_create_note(
 # ------------------------------------------------------------------
 
 
-@mcp.tool(name="list_folders")
-async def tool_list_folders() -> dict:
+@mcp.tool(
+    name="list_folders",
+    title="List Folders",
+    tags={"read"},
+    annotations={
+        "title": "List Folders",
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def tool_list_folders() -> FolderList:
     """[notes] List all folders in Apple Notes with note counts.
 
     Returns:
-        A dict with a list of folders, each containing name, path, and note_count.
+        A FolderList; each folder has name, path, note_count, and identifier.
     """
     try:
         folders = await asyncio.to_thread(_reader.list_folders)
-        return {"success": True, "folders": folders}
+        return FolderList(folders=folders)
     except Exception as e:
         logger.exception("list_folders failed")
-        return {"success": False, "error": str(e)}
+        raise ToolError(f"Failed to list folders: {e}") from e
 
 
-@mcp.tool(name="list_notes")
+@mcp.tool(
+    name="list_notes",
+    title="List Notes",
+    tags={"read"},
+    annotations={
+        "title": "List Notes",
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
 async def tool_list_notes(
     folder: str | None = None,
     limit: Annotated[int, Field(ge=1, le=500)] = 50,
     offset: Annotated[int, Field(ge=0)] = 0,
     sort_by: Literal["modified", "created", "title"] = "modified",
-) -> dict:
+) -> NoteList:
     """[notes] List notes with pagination and optional folder filter.
 
     Args:
@@ -181,35 +373,57 @@ async def tool_list_notes(
         sort_by: Sort order — "modified" (default), "created", or "title".
 
     Returns:
-        A dict with notes list, total count, limit, and offset.
+        A NoteList with notes (summaries), total count, limit, and offset.
     """
     try:
         result = await asyncio.to_thread(
             _reader.list_notes, folder=folder, limit=limit, offset=offset, sort_by=sort_by
         )
-        return {"success": True, **result}
+        return NoteList(**result)
     except Exception as e:
         logger.exception("list_notes failed")
-        return {"success": False, "error": str(e)}
+        raise ToolError(f"Failed to list notes: {e}") from e
 
 
-@mcp.tool(name="list_tags")
-async def tool_list_tags() -> dict:
+@mcp.tool(
+    name="list_tags",
+    title="List Tags",
+    tags={"read"},
+    annotations={
+        "title": "List Tags",
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def tool_list_tags() -> TagList:
     """[notes] List all hashtags used in Apple Notes with usage counts.
 
     Returns:
-        A dict with a list of all tags, each with name and note_count.
+        A TagList with all tags, each with tag name, identifier, and note_count.
     """
     try:
         tags = await asyncio.to_thread(_reader.list_tags)
-        return {"success": True, "tags": tags, "total": len(tags)}
+        return TagList(tags=tags, total=len(tags))
     except Exception as e:
         logger.exception("list_tags failed")
-        return {"success": False, "error": str(e)}
+        raise ToolError(f"Failed to list tags: {e}") from e
 
 
-@mcp.tool(name="search_by_tag")
-async def tool_search_by_tag(tag: str, limit: Annotated[int, Field(ge=1, le=500)] = 50) -> dict:
+@mcp.tool(
+    name="search_by_tag",
+    title="Search by Tag",
+    tags={"read"},
+    annotations={
+        "title": "Search by Tag",
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def tool_search_by_tag(
+    tag: str, limit: Annotated[int, Field(ge=1, le=500)] = 50
+) -> TagSearchResult:
     """[notes] Find all notes with a specific hashtag.
 
     For hashtag lookup, use this tool instead of search_notes (which searches body text only).
@@ -219,18 +433,28 @@ async def tool_search_by_tag(tag: str, limit: Annotated[int, Field(ge=1, le=500)
         limit: Maximum results to return (default 50).
 
     Returns:
-        A dict with matching notes.
+        A TagSearchResult with matching note summaries.
     """
     try:
         results = await asyncio.to_thread(_reader.search_by_tag, tag=tag, limit=limit)
-        return {"success": True, "results": results, "tag": tag, "total": len(results)}
+        return TagSearchResult(results=results, tag=tag, total=len(results))
     except Exception as e:
         logger.exception("search_by_tag failed")
-        return {"success": False, "error": str(e)}
+        raise ToolError(f"Failed to search by tag {tag!r}: {e}") from e
 
 
-@mcp.tool(name="get_note")
-async def tool_get_note(note_id: int) -> dict:
+@mcp.tool(
+    name="get_note",
+    title="Get Note",
+    tags={"read"},
+    annotations={
+        "title": "Get Note",
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def tool_get_note(note_id: int) -> NoteDetail:
     """[notes] Get the full content of a note by its ID.
 
     The note_id is the numeric ID returned by list_notes or search_notes.
@@ -241,18 +465,33 @@ async def tool_get_note(note_id: int) -> dict:
         note_id: The numeric note ID (Z_PK from list_notes results).
 
     Returns:
-        A dict with note content, metadata, and formatting.
+        A NoteDetail with the full body, tags, and metadata.
     """
     try:
         result = await asyncio.to_thread(_reader.get_note, note_id=note_id)
-        return {"success": True, **result}
+        return NoteDetail(**result)
+    except ValueError as e:
+        # Note not found — surface as an actionable tool error.
+        raise ToolError(str(e)) from e
     except Exception as e:
         logger.exception("get_note failed")
-        return {"success": False, "error": str(e)}
+        raise ToolError(f"Failed to get note {note_id}: {e}") from e
 
 
-@mcp.tool(name="search_notes")
-async def tool_search_notes(query: str, limit: Annotated[int, Field(ge=1, le=100)] = 20) -> dict:
+@mcp.tool(
+    name="search_notes",
+    title="Search Notes",
+    tags={"read"},
+    annotations={
+        "title": "Search Notes",
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def tool_search_notes(
+    query: str, limit: Annotated[int, Field(ge=1, le=100)] = 20
+) -> SearchResult:
     """[notes] Full-text search across all Apple Notes.
 
     Searches note titles and body text using keyword matching.
@@ -264,32 +503,42 @@ async def tool_search_notes(query: str, limit: Annotated[int, Field(ge=1, le=100
         limit: Maximum results to return (default 20).
 
     Returns:
-        A dict with ranked search results including snippets.
+        A SearchResult with ranked hits (BM25 rank) including snippets.
     """
     try:
         results = await asyncio.to_thread(_reader.search_notes, query=query, limit=limit)
-        return {"success": True, "results": results, "query": query}
+        return SearchResult(results=results, query=query)
     except Exception as e:
         logger.exception("search_notes failed")
-        return {"success": False, "error": str(e)}
+        raise ToolError(f"Failed to search notes for {query!r}: {e}") from e
 
 
-@mcp.tool(name="get_stats")
-async def tool_get_stats() -> dict:
+@mcp.tool(
+    name="get_stats",
+    title="Get Stats",
+    tags={"read"},
+    annotations={
+        "title": "Get Stats",
+        "readOnlyHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def tool_get_stats() -> StatsResult:
     """[notes] Get Apple Notes statistics and overview.
 
     Returns aggregate counts: total notes, folders, pinned notes,
     notes with checklists, notes per folder, and date range.
 
     Returns:
-        A dict with aggregate statistics.
+        A StatsResult with aggregate statistics.
     """
     try:
         stats = await asyncio.to_thread(_reader.get_stats)
-        return {"success": True, **stats}
+        return StatsResult(**stats)
     except Exception as e:
         logger.exception("get_stats failed")
-        return {"success": False, "error": str(e)}
+        raise ToolError(f"Failed to get stats: {e}") from e
 
 
 # ------------------------------------------------------------------
@@ -297,8 +546,22 @@ async def tool_get_stats() -> dict:
 # ------------------------------------------------------------------
 
 
-@mcp.tool(name="move_note")
-async def tool_move_note(note_id: int, folder: str) -> dict:
+@mcp.tool(
+    name="move_note",
+    title="Move Note",
+    tags={"write"},
+    annotations={
+        "title": "Move Note",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        # Re-running a move to the same folder is a no-op, so it is idempotent.
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def tool_move_note(
+    note_id: int, folder: str, ctx: Context | None = None
+) -> WriteResult:
     """[notes] Move a note to a different folder.
 
     Uses the note's numeric ID (returned by list_notes, get_note, or search_notes).
@@ -309,32 +572,51 @@ async def tool_move_note(note_id: int, folder: str) -> dict:
         folder: Destination folder name.
 
     Returns:
-        A dict with success status.
+        A WriteResult with success status, note_id, and target folder.
     """
+    if ctx is not None:
+        await ctx.info(f"Moving note {note_id} to folder {folder!r}")
     try:
-        return await asyncio.to_thread(move_note, note_id=note_id, target_folder=folder)
+        result = await asyncio.to_thread(move_note, note_id=note_id, target_folder=folder)
     except Exception as e:
         logger.exception("move_note failed")
-        return {"success": False, "error": str(e)}
+        raise ToolError(f"Failed to move note {note_id} to {folder!r}: {e}") from e
+    return WriteResult(**result)
 
 
-@mcp.tool(name="delete_note")
-async def tool_delete_note(note_id: int) -> dict:
+@mcp.tool(
+    name="delete_note",
+    title="Delete Note",
+    tags={"write", "destructive"},
+    annotations={
+        "title": "Delete Note",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        # Notes app dedupes the move; a second delete just no-ops on the trash.
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def tool_delete_note(note_id: int, ctx: Context | None = None) -> WriteResult:
     """[notes] Delete a note (moves to Recently Deleted).
 
     Uses the note's numeric ID (returned by list_notes, get_note, or search_notes).
+    Recoverable from Apple Notes' "Recently Deleted" folder for ~30 days.
 
     Args:
         note_id: The numeric note ID (from note results).
 
     Returns:
-        A dict with success status.
+        A WriteResult with success status and note_id.
     """
+    if ctx is not None:
+        await ctx.info(f"Deleting note {note_id} (-> Recently Deleted)")
     try:
-        return await asyncio.to_thread(delete_note, note_id=note_id)
+        result = await asyncio.to_thread(delete_note, note_id=note_id)
     except Exception as e:
         logger.exception("delete_note failed")
-        return {"success": False, "error": str(e)}
+        raise ToolError(f"Failed to delete note {note_id}: {e}") from e
+    return WriteResult(**result)
 
 
 def _validate_url(url: str) -> None:
@@ -442,19 +724,36 @@ def _run_shortcut(payload: dict) -> dict:
     return {"success": True, "title": payload.get("title", "")}
 
 
-@mcp.tool(name="create_recipe_note")
+@mcp.tool(
+    name="create_recipe_note",
+    title="Create Recipe Note",
+    tags={"write"},
+    annotations={
+        "title": "Create Recipe Note",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        # Downloads remote media (yt-dlp/HTTP) and runs a macOS Shortcut.
+        "openWorldHint": True,
+    },
+)
 async def tool_create_recipe_note(
     title: str,
     body_html: str,
     image_url: str = "",
     video_url: str = "",
-) -> dict:
+    ctx: Context | None = None,
+) -> WriteResult:
     """[notes] Create a recipe note in Apple Notes with optional image and video.
 
     Uses the 'Sammler Recipe Note' macOS Shortcut to create a note with
     rich HTML content and media attachments. Media is downloaded from the
     provided URLs, served via a temporary local HTTP server, and the
     Shortcut fetches them using 'Get Contents of URL'.
+
+    This is a multi-stage, potentially minutes-long job (download → optional
+    ffmpeg transcode → Shortcut run); progress is reported via Context when one
+    is available.
 
     Args:
         title: Recipe title (becomes the note name).
@@ -463,18 +762,48 @@ async def tool_create_recipe_note(
         video_url: HTTP URL to the video (must be H.264 MP4). Empty to skip.
 
     Returns:
-        A dict with success status and title.
+        A WriteResult with success status, title, and an applenotes:// deep-link.
     """
+    # Elicit on fully ambiguous input — a recipe note with no media is valid,
+    # but it is worth confirming the caller really wants a text-only note when
+    # both media URLs are empty (the common cause is a dropped/forgotten URL).
+    if ctx is not None and not image_url and not video_url:
+        try:
+            answer = await ctx.elicit(
+                "No image_url or video_url provided — create a text-only recipe "
+                "note? Reply 'yes' to proceed, or provide a media URL.",
+                response_type=str,
+            )
+            if getattr(answer, "action", "accept") == "decline":
+                raise ToolError("Recipe note creation declined — no media supplied.")
+        except ToolError:
+            raise
+        except Exception:
+            # Client doesn't support elicitation — fall through and create the
+            # text-only note rather than failing.
+            logger.debug("Elicitation unavailable; proceeding with text-only recipe note")
+
     media_files: list[str] = []
     http_server = None
+    total_stages = 1 + (1 if image_url else 0) + (1 if video_url else 0)
+    stage = 0
+
+    async def _progress(message: str) -> None:
+        nonlocal stage
+        stage += 1
+        if ctx is not None:
+            await ctx.info(message)
+            await ctx.report_progress(progress=stage, total=total_stages)
 
     try:
         # Download media from remote URLs to local temp files
         if image_url:
+            await _progress("Downloading cover image")
             img_path = await asyncio.to_thread(_download_to_temp, image_url, ".jpg")
             media_files.append(img_path)
 
         if video_url:
+            await _progress("Downloading video (yt-dlp; may transcode VP9 -> H.264)")
             vid_path = await asyncio.to_thread(_download_to_temp, video_url, ".mp4")
             media_files.append(vid_path)
 
@@ -492,6 +821,7 @@ async def tool_create_recipe_note(
                 vid_file = media_files[-1]
                 payload["videoPath"] = f"http://127.0.0.1:18765/{Path(vid_file).name}"
 
+        await _progress("Running 'Sammler Recipe Note' Shortcut")
         result = await asyncio.to_thread(_run_shortcut, payload)
         if result.get("success"):
             # Augment the shortcut result with an applenotes:// deep-link.
@@ -500,7 +830,11 @@ async def tool_create_recipe_note(
             from .applescript_bridge import _build_note_url
             url = await asyncio.to_thread(_build_note_url, title, "Recipes")
             result["url"] = url
-        return result
+        else:
+            raise ToolError(
+                f"Shortcut failed for recipe {title!r}: {result.get('error', 'unknown error')}"
+            )
+        return WriteResult(**result)
 
     finally:
         if http_server:
@@ -511,6 +845,131 @@ async def tool_create_recipe_note(
                 os.unlink(f)
             except OSError:
                 pass
+
+
+# ------------------------------------------------------------------
+# Resources — ambient reference data the client can pin as context
+# instead of spending a tool round-trip on orientation queries.
+# ------------------------------------------------------------------
+
+
+@mcp.resource(
+    "notes://stats",
+    name="Apple Notes overview",
+    title="Apple Notes overview",
+    description="Aggregate counts (notes, folders, pinned, checklists), "
+    "notes-per-folder, and date range. Same data as the get_stats tool, "
+    "exposed as pinnable context.",
+    mime_type="application/json",
+    tags={"read"},
+)
+async def resource_stats() -> StatsResult:
+    """Apple Notes aggregate statistics as a resource."""
+    stats = await asyncio.to_thread(_reader.get_stats)
+    return StatsResult(**stats)
+
+
+@mcp.resource(
+    "notes://folders",
+    name="Apple Notes folders",
+    title="Apple Notes folders",
+    description="The folder tree with note counts and nesting paths. "
+    "Same data as the list_folders tool.",
+    mime_type="application/json",
+    tags={"read"},
+)
+async def resource_folders() -> FolderList:
+    """The Apple Notes folder tree as a resource."""
+    folders = await asyncio.to_thread(_reader.list_folders)
+    return FolderList(folders=folders)
+
+
+@mcp.resource(
+    "notes://tags",
+    name="Apple Notes tags",
+    title="Apple Notes tags",
+    description="Every hashtag used across Apple Notes with usage counts. "
+    "Same data as the list_tags tool — a cheap map of how the notes are "
+    "organized before searching.",
+    mime_type="application/json",
+    tags={"read"},
+)
+async def resource_tags() -> TagList:
+    """The Apple Notes hashtag taxonomy as a resource."""
+    tags = await asyncio.to_thread(_reader.list_tags)
+    return TagList(tags=tags, total=len(tags))
+
+
+# ------------------------------------------------------------------
+# Prompts — guided multi-step workflows for this server's signature jobs.
+# ------------------------------------------------------------------
+
+
+@mcp.prompt(
+    name="capture_recipe",
+    title="Capture a recipe into Apple Notes",
+    tags={"write"},
+)
+def prompt_capture_recipe(
+    source: str = "",
+    title: str = "",
+) -> str:
+    """Guide the model through capturing a recipe (optionally from a URL/reel)
+    into the Recipes folder with image and video attachments.
+
+    Args:
+        source: The recipe source — a URL (e.g. an Instagram reel) or pasted text.
+        title: Optional desired note title; leave blank to derive one.
+    """
+    target = f"the source: {source}" if source else "the recipe the user provides"
+    title_hint = (
+        f'Use the title "{title}".'
+        if title
+        else "Derive a short, descriptive title from the recipe."
+    )
+    return (
+        "You are capturing a recipe into Apple Notes using this server.\n\n"
+        f"1. Gather the recipe from {target}. If it is a media URL "
+        "(Instagram reel, YouTube, TikTok), keep the original URL — "
+        "create_recipe_note can download the video and a cover image.\n"
+        "2. Structure the body as clean HTML: an <h2> for Ingredients with a "
+        "<ul> list, then an <h2> for Instructions with an <ol> list. Keep it "
+        "concise and faithful to the source.\n"
+        f"3. {title_hint}\n"
+        "4. Call create_recipe_note with title, body_html, and (when available) "
+        "image_url and/or video_url. The note lands in the Recipes folder and "
+        "you get back an applenotes:// deep-link.\n"
+        "5. Report the deep-link so the user can open the note."
+    )
+
+
+@mcp.prompt(
+    name="triage_notes",
+    title="Triage and organize loose notes",
+    tags={"read"},
+)
+def prompt_triage_notes(folder: str = "Notes") -> str:
+    """Guide the model through reviewing recent notes in a folder and proposing
+    a tidy-up (move/merge/delete), confirming destructive steps first.
+
+    Args:
+        folder: The folder to triage (default "Notes" — the inbox).
+    """
+    return (
+        f"Help the user triage the '{folder}' folder in Apple Notes.\n\n"
+        "1. Read notes://stats and notes://folders for orientation (no tool call "
+        "needed — they are resources).\n"
+        f"2. Call list_notes(folder=\"{folder}\", sort_by=\"modified\") to see "
+        "the most recently touched notes.\n"
+        "3. For ambiguous items, call get_note(note_id) to read the full body "
+        "before deciding.\n"
+        "4. Propose a concrete plan: which notes to move (and to which folder), "
+        "which to keep, and which look stale/duplicate.\n"
+        "5. Apply moves with move_note. Only call delete_note after the user "
+        "explicitly confirms — it is the one destructive tool (recoverable from "
+        "Recently Deleted for ~30 days).\n"
+        "6. Summarize what changed."
+    )
 
 
 def main():
