@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.12] - 2026-06-10
+
+- feat: fastmcp 3.4.2 uplift — annotations, structured output, resources, prompts, context (#20)
+
+
 ## [0.3.10] - 2026-05-04
 
 - fix(threading,url): per-thread FTS connections + applenotes:// deep-link
