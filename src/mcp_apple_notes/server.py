@@ -236,7 +236,10 @@ class WriteResult(_Model):
 
     Preserves the historical ``{success, note_id, ...}`` envelope so existing
     clients and the Cloudflare portal keep working; ``url`` is the
-    ``applenotes://`` deep-link when available.
+    ``applenotes://`` deep-link when available. ``error`` is populated (with
+    ``success=False``) when an operation is cancelled/declined or otherwise
+    does not complete, so the same model validates both the success and the
+    ``{"error": ...}`` shapes without raising.
     """
 
     success: bool
@@ -244,6 +247,7 @@ class WriteResult(_Model):
     title: str | None = None
     folder: str | None = None
     url: str | None = None
+    error: str | None = None
 
 
 # --- Health endpoint -----------------------------------------------------
@@ -603,12 +607,51 @@ async def tool_delete_note(note_id: int, ctx: Context | None = None) -> WriteRes
     Uses the note's numeric ID (returned by list_notes, get_note, or search_notes).
     Recoverable from Apple Notes' "Recently Deleted" folder for ~30 days.
 
+    Confirmation: when the client supports elicitation, this asks for an explicit
+    yes/no before deleting (the note_id is irreversible — there is no undo beyond
+    the ~30-day Recently Deleted window). Clients that do NOT support elicitation
+    proceed straight to the delete (the destructiveHint annotation already warns
+    the model/host), so this tool never breaks through a non-elicitation client.
+    If the user declines or cancels, nothing is deleted and a cancelled result is
+    returned.
+
     Args:
         note_id: The numeric note ID (from note results).
 
     Returns:
-        A WriteResult with success status and note_id.
+        A WriteResult with success status and note_id. On a declined/cancelled
+        confirmation, success is False and error explains the abort.
     """
+    # Defensive elicitation: confirm the irreversible delete *only* when the
+    # client advertises elicitation support. ctx.elicit() raises when the
+    # client/portal has no elicitation handler; we treat any such failure as
+    # "proceed" so delete_note keeps working everywhere (e.g. the Cloudflare
+    # portal, launchd-local clients). The destructiveHint annotation is the
+    # safety net for those non-interactive clients.
+    if ctx is not None:
+        try:
+            answer = await ctx.elicit(
+                f"Delete note {note_id}? It moves to 'Recently Deleted' "
+                "(recoverable for ~30 days, then gone). Reply 'yes' to confirm.",
+                response_type=str,
+            )
+        except Exception:
+            # Client doesn't support elicitation — fall through and delete.
+            logger.debug(
+                "Elicitation unavailable; proceeding with delete of note %s", note_id
+            )
+        else:
+            action = getattr(answer, "action", "accept")
+            if action != "accept":
+                # User declined or cancelled — do NOT delete, do NOT raise an
+                # opaque error. Return a clear cancelled envelope.
+                logger.info("delete_note for note %s cancelled (%s)", note_id, action)
+                return WriteResult(
+                    success=False,
+                    note_id=note_id,
+                    error=f"Delete cancelled by user ({action}); note {note_id} not deleted.",
+                )
+
     if ctx is not None:
         await ctx.info(f"Deleting note {note_id} (-> Recently Deleted)")
     try:
