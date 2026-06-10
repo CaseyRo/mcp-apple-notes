@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.14] - 2026-06-10
+
+- feat(apple-notes): defensive elicit confirmation on delete_note (shelf) (#21)
+
+
 ## [0.3.12] - 2026-06-10
 
 - feat: fastmcp 3.4.2 uplift — annotations, structured output, resources, prompts, context (#20)
