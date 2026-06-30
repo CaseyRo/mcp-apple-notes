@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.16] - 2026-06-30
+
+- chore(deps): security upgrades (pip-audit)
+
+
 ## [0.3.15] - 2026-06-30
 
 - chore: hygiene + security pass
