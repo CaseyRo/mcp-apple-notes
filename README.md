@@ -27,10 +27,12 @@ APPLE_NOTES_MCP_API_KEY=your-secret-key
 Optional settings:
 
 ```bash
-APPLE_NOTES_MCP_HOST=0.0.0.0       # default
+APPLE_NOTES_MCP_HOST=127.0.0.1      # default (loopback only)
 APPLE_NOTES_MCP_PORT=8010           # default
 APPLE_NOTES_DB_PATH=~/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite  # default
 ```
+
+Without an API key, the server refuses to bind to anything other than loopback. To expose it on a non-loopback address you must set `APPLE_NOTES_MCP_API_KEY`.
 
 ## Run
 
@@ -38,7 +40,7 @@ APPLE_NOTES_DB_PATH=~/Library/Group Containers/group.com.apple.notes/NoteStore.s
 mcp-apple-notes
 ```
 
-The server starts on `http://0.0.0.0:8010/mcp` using streamable-http transport.
+The server starts on `http://127.0.0.1:8010/mcp` using streamable-http transport.
 
 ## Tools
 
