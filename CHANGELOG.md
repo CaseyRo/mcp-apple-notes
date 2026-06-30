@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.15] - 2026-06-30
+
+- chore: hygiene + security pass
+
+
 ## [0.3.14] - 2026-06-10
 
 - feat(apple-notes): defensive elicit confirmation on delete_note (shelf) (#21)
