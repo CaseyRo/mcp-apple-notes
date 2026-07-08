@@ -31,7 +31,7 @@ classifiers = [
     "Operating System :: MacOS",
 ]
 dependencies = [
-    "fastmcp>=3.4.2,<4.0.0",
+    "fastmcp>=3.4.3,<4.0.0",
     "pydantic-settings>=2.14.2",  # GHSA-4xgf-cpjx-pc3j
     "markdownify>=0.14.1",
     # Security floors (transitive deps of fastmcp; pinned to address CVEs)
