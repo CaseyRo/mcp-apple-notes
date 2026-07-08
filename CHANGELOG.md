@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.18] - 2026-07-08
+
+- Pin Python 3.12.11: TCC AppleEvents grants are keyed to the interpreter binary; 3.13 venv hangs osascript under launchd
+
+
 ## [0.3.17] - 2026-07-08
 
 - fix: fastmcp>=3.4.3 + allowed_hosts=["*"] — 3.4.3 rejects non-localhost Host with 421 (edge CF-Access/Tailscale gated)
