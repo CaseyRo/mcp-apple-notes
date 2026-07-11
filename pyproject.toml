@@ -33,7 +33,7 @@ classifiers = [
 dependencies = [
     "fastmcp>=3.4.3,<4.0.0",
     "pydantic-settings>=2.14.2",  # GHSA-4xgf-cpjx-pc3j
-    "markdownify>=0.14.1",
+    "markdownify>=1.2.3",
     # Security floors (transitive deps of fastmcp; pinned to address CVEs)
     "authlib>=1.7.0",            # GHSA: CSRF in token cache handling
     "python-multipart>=0.0.31",  # CVE-2026-53538/53539/53540: DoS via unbounded multipart headers
