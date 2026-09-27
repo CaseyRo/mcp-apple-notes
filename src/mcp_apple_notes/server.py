@@ -25,6 +25,7 @@ from fastmcp.server.auth import AccessToken, TokenVerifier
 from .config import get_settings
 from .applescript_bridge import create_note, move_note, delete_note
 from .notestore import NoteStoreReader
+from .usage import UsageMiddleware
 
 logger = logging.getLogger("mcp_apple_notes")
 logging.basicConfig(
@@ -106,6 +107,7 @@ def _create_server() -> FastMCP:
 
 
 mcp = _create_server()
+mcp.add_middleware(UsageMiddleware("apple-notes"))
 _reader = NoteStoreReader(get_settings().db_path_resolved)
 
 
