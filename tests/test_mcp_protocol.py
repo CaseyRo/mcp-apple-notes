@@ -61,3 +61,21 @@ async def test_a_tool_call_round_trips(monkeypatch):
         result = await client.call_tool("list_folders", {})
     assert not result.is_error
     assert result.structured_content["folders"][0]["name"] == "Inbox"
+
+
+async def test_a_tool_call_writes_one_usage_line(monkeypatch, capsys):
+    import json
+
+    monkeypatch.setattr(server, "_reader", SimpleNamespace(list_folders=lambda: []))
+    capsys.readouterr()
+    async with Client(server.mcp) as client:
+        await client.call_tool("list_folders", {})
+    lines = [
+        json.loads(line)
+        for line in capsys.readouterr().err.splitlines()
+        if '"mcp_usage"' in line
+    ]
+    assert len(lines) == 1
+    assert lines[0]["server"] == "apple-notes"
+    assert lines[0]["tool"] == "list_folders"
+    assert lines[0]["outcome"] == "ok"
