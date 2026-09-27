@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.20] - 2026-09-27
+
+- chore(ci): phase-0 safety net — CI job 'test', release runs tests, in-memory protocol tests (#44)
+
+
 ## [0.3.18] - 2026-07-08
 
 - Pin Python 3.12.11: TCC AppleEvents grants are keyed to the interpreter binary; 3.13 venv hangs osascript under launchd
