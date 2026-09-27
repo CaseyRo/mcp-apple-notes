@@ -32,6 +32,9 @@ jobs:
       - name: Install
         run: uv sync
 
+      - name: Test
+        run: uv run pytest
+
       - name: Security audit (pip-audit)
         run: uvx pip-audit
 
