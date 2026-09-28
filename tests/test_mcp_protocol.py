@@ -47,8 +47,8 @@ async def test_read_only_annotations_survive_the_wire():
         tools = {t.name: t for t in await client.list_tools()}
     ann = tools["list_folders"].annotations
     assert ann is not None
-    assert ann.readOnlyHint is True
-    assert ann.openWorldHint is False
+    assert ann.read_only_hint is True
+    assert ann.open_world_hint is False
 
 
 async def test_a_tool_call_round_trips(monkeypatch):
@@ -79,3 +79,19 @@ async def test_a_tool_call_writes_one_usage_line(monkeypatch, capsys):
     assert lines[0]["server"] == "apple-notes"
     assert lines[0]["tool"] == "list_folders"
     assert lines[0]["outcome"] == "ok"
+
+
+async def test_delete_proceeds_when_client_cannot_elicit(monkeypatch):
+    """No elicitation handler on the client: ctx.elicit fails fast, delete proceeds."""
+    import time
+
+    deleted: list[int] = []
+    monkeypatch.setattr(
+        server, "delete_note", lambda note_id: deleted.append(note_id) or {"success": True, "note_id": note_id}
+    )
+    start = time.perf_counter()
+    async with Client(server.mcp) as client:
+        result = await client.call_tool("delete_note", {"note_id": 5})
+    assert deleted == [5]
+    assert result.structured_content["success"] is True
+    assert time.perf_counter() - start < server._ELICIT_TIMEOUT_S

@@ -34,6 +34,27 @@ logging.basicConfig(
 )
 
 
+# An elicit through the portal can hang forever (CDI-1551); past this, proceed.
+_ELICIT_TIMEOUT_S = 5.0
+
+
+async def _confirm(ctx: Context | None, message: str) -> bool:
+    """Ask a yes/no question; False only on an explicit decline, cancel or "no".
+
+    No Context, a client without elicitation, or no answer within
+    _ELICIT_TIMEOUT_S all proceed: the tool annotations already warn the host.
+    """
+    if ctx is None:
+        return True
+    try:
+        async with asyncio.timeout(_ELICIT_TIMEOUT_S):
+            answer = await ctx.elicit(message, response_type=bool)
+    except Exception:
+        logger.debug("Elicitation unavailable or timed out; proceeding", exc_info=True)
+        return True
+    return answer.action == "accept" and getattr(answer, "data", True) is not False
+
+
 class BearerTokenVerifier(TokenVerifier):
     """Validates incoming requests against a static API key.
 
@@ -287,17 +308,16 @@ async def _healthz(request: _SReq) -> _SResp:
     tags={"write"},
     annotations={
         "title": "Create Note",
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": False,
-        "openWorldHint": True,
+        "read_only_hint": False,
+        "destructive_hint": False,
+        "idempotent_hint": False,
+        "open_world_hint": True,
     },
 )
 async def tool_create_note(
     title: str,
     body: str,
     folder: str = "Notes",
-    ctx: Context | None = None,
 ) -> WriteResult:
     """[notes] Create a new note in Apple Notes (text only, no media).
 
@@ -313,8 +333,6 @@ async def tool_create_note(
         A WriteResult with success status, note_id, title, folder, and an
         applenotes:// deep-link url.
     """
-    if ctx is not None:
-        await ctx.info(f"Creating note {title!r} in folder {folder!r}")
     try:
         result = await asyncio.to_thread(create_note, title=title, body=body, folder=folder)
     except Exception as e:
@@ -334,9 +352,9 @@ async def tool_create_note(
     tags={"read"},
     annotations={
         "title": "List Folders",
-        "readOnlyHint": True,
-        "idempotentHint": True,
-        "openWorldHint": False,
+        "read_only_hint": True,
+        "idempotent_hint": True,
+        "open_world_hint": False,
     },
 )
 async def tool_list_folders() -> FolderList:
@@ -359,9 +377,9 @@ async def tool_list_folders() -> FolderList:
     tags={"read"},
     annotations={
         "title": "List Notes",
-        "readOnlyHint": True,
-        "idempotentHint": True,
-        "openWorldHint": False,
+        "read_only_hint": True,
+        "idempotent_hint": True,
+        "open_world_hint": False,
     },
 )
 async def tool_list_notes(
@@ -397,9 +415,9 @@ async def tool_list_notes(
     tags={"read"},
     annotations={
         "title": "List Tags",
-        "readOnlyHint": True,
-        "idempotentHint": True,
-        "openWorldHint": False,
+        "read_only_hint": True,
+        "idempotent_hint": True,
+        "open_world_hint": False,
     },
 )
 async def tool_list_tags() -> TagList:
@@ -422,9 +440,9 @@ async def tool_list_tags() -> TagList:
     tags={"read"},
     annotations={
         "title": "Search by Tag",
-        "readOnlyHint": True,
-        "idempotentHint": True,
-        "openWorldHint": False,
+        "read_only_hint": True,
+        "idempotent_hint": True,
+        "open_world_hint": False,
     },
 )
 async def tool_search_by_tag(
@@ -455,9 +473,9 @@ async def tool_search_by_tag(
     tags={"read"},
     annotations={
         "title": "Get Note",
-        "readOnlyHint": True,
-        "idempotentHint": True,
-        "openWorldHint": False,
+        "read_only_hint": True,
+        "idempotent_hint": True,
+        "open_world_hint": False,
     },
 )
 async def tool_get_note(note_id: int) -> NoteDetail:
@@ -490,9 +508,9 @@ async def tool_get_note(note_id: int) -> NoteDetail:
     tags={"read"},
     annotations={
         "title": "Search Notes",
-        "readOnlyHint": True,
-        "idempotentHint": True,
-        "openWorldHint": False,
+        "read_only_hint": True,
+        "idempotent_hint": True,
+        "open_world_hint": False,
     },
 )
 async def tool_search_notes(
@@ -525,9 +543,9 @@ async def tool_search_notes(
     tags={"read"},
     annotations={
         "title": "Get Stats",
-        "readOnlyHint": True,
-        "idempotentHint": True,
-        "openWorldHint": False,
+        "read_only_hint": True,
+        "idempotent_hint": True,
+        "open_world_hint": False,
     },
 )
 async def tool_get_stats() -> StatsResult:
@@ -558,16 +576,14 @@ async def tool_get_stats() -> StatsResult:
     tags={"write"},
     annotations={
         "title": "Move Note",
-        "readOnlyHint": False,
-        "destructiveHint": False,
+        "read_only_hint": False,
+        "destructive_hint": False,
         # Re-running a move to the same folder is a no-op, so it is idempotent.
-        "idempotentHint": True,
-        "openWorldHint": True,
+        "idempotent_hint": True,
+        "open_world_hint": True,
     },
 )
-async def tool_move_note(
-    note_id: int, folder: str, ctx: Context | None = None
-) -> WriteResult:
+async def tool_move_note(note_id: int, folder: str) -> WriteResult:
     """[notes] Move a note to a different folder.
 
     Uses the note's numeric ID (returned by list_notes, get_note, or search_notes).
@@ -580,8 +596,6 @@ async def tool_move_note(
     Returns:
         A WriteResult with success status, note_id, and target folder.
     """
-    if ctx is not None:
-        await ctx.info(f"Moving note {note_id} to folder {folder!r}")
     try:
         result = await asyncio.to_thread(move_note, note_id=note_id, target_folder=folder)
     except Exception as e:
@@ -596,11 +610,11 @@ async def tool_move_note(
     tags={"write", "destructive"},
     annotations={
         "title": "Delete Note",
-        "readOnlyHint": False,
-        "destructiveHint": True,
+        "read_only_hint": False,
+        "destructive_hint": True,
         # Notes app dedupes the move; a second delete just no-ops on the trash.
-        "idempotentHint": True,
-        "openWorldHint": True,
+        "idempotent_hint": True,
+        "open_world_hint": True,
     },
 )
 async def tool_delete_note(note_id: int, ctx: Context | None = None) -> WriteResult:
@@ -612,8 +626,9 @@ async def tool_delete_note(note_id: int, ctx: Context | None = None) -> WriteRes
     Confirmation: when the client supports elicitation, this asks for an explicit
     yes/no before deleting (the note_id is irreversible — there is no undo beyond
     the ~30-day Recently Deleted window). Clients that do NOT support elicitation
-    proceed straight to the delete (the destructiveHint annotation already warns
-    the model/host), so this tool never breaks through a non-elicitation client.
+    proceed straight to the delete (the destructive_hint annotation already warns
+    the model/host), and so do clients that give no answer within 5 s, so this
+    tool never breaks through a non-elicitation client.
     If the user declines or cancels, nothing is deleted and a cancelled result is
     returned.
 
@@ -624,38 +639,18 @@ async def tool_delete_note(note_id: int, ctx: Context | None = None) -> WriteRes
         A WriteResult with success status and note_id. On a declined/cancelled
         confirmation, success is False and error explains the abort.
     """
-    # Defensive elicitation: confirm the irreversible delete *only* when the
-    # client advertises elicitation support. ctx.elicit() raises when the
-    # client/portal has no elicitation handler; we treat any such failure as
-    # "proceed" so delete_note keeps working everywhere (e.g. the Cloudflare
-    # portal, launchd-local clients). The destructiveHint annotation is the
-    # safety net for those non-interactive clients.
-    if ctx is not None:
-        try:
-            answer = await ctx.elicit(
-                f"Delete note {note_id}? It moves to 'Recently Deleted' "
-                "(recoverable for ~30 days, then gone). Reply 'yes' to confirm.",
-                response_type=str,
-            )
-        except Exception:
-            # Client doesn't support elicitation — fall through and delete.
-            logger.debug(
-                "Elicitation unavailable; proceeding with delete of note %s", note_id
-            )
-        else:
-            action = getattr(answer, "action", "accept")
-            if action != "accept":
-                # User declined or cancelled — do NOT delete, do NOT raise an
-                # opaque error. Return a clear cancelled envelope.
-                logger.info("delete_note for note %s cancelled (%s)", note_id, action)
-                return WriteResult(
-                    success=False,
-                    note_id=note_id,
-                    error=f"Delete cancelled by user ({action}); note {note_id} not deleted.",
-                )
+    if not await _confirm(
+        ctx,
+        f"Delete note {note_id}? It moves to 'Recently Deleted' "
+        "(recoverable for ~30 days, then gone).",
+    ):
+        logger.info("delete_note for note %s cancelled", note_id)
+        return WriteResult(
+            success=False,
+            note_id=note_id,
+            error=f"Delete cancelled by user; note {note_id} not deleted.",
+        )
 
-    if ctx is not None:
-        await ctx.info(f"Deleting note {note_id} (-> Recently Deleted)")
     try:
         result = await asyncio.to_thread(delete_note, note_id=note_id)
     except Exception as e:
@@ -775,11 +770,11 @@ def _run_shortcut(payload: dict) -> dict:
     tags={"write"},
     annotations={
         "title": "Create Recipe Note",
-        "readOnlyHint": False,
-        "destructiveHint": False,
-        "idempotentHint": False,
+        "read_only_hint": False,
+        "destructive_hint": False,
+        "idempotent_hint": False,
         # Downloads remote media (yt-dlp/HTTP) and runs a macOS Shortcut.
-        "openWorldHint": True,
+        "open_world_hint": True,
     },
 )
 async def tool_create_recipe_note(
@@ -797,8 +792,10 @@ async def tool_create_recipe_note(
     Shortcut fetches them using 'Get Contents of URL'.
 
     This is a multi-stage, potentially minutes-long job (download → optional
-    ffmpeg transcode → Shortcut run); progress is reported via Context when one
-    is available.
+    ffmpeg transcode → Shortcut run).
+
+    When both media URLs are empty it asks to confirm a text-only note; a
+    decline or cancel aborts, no answer within 5 s proceeds.
 
     Args:
         title: Recipe title (becomes the note name).
@@ -809,46 +806,22 @@ async def tool_create_recipe_note(
     Returns:
         A WriteResult with success status, title, and an applenotes:// deep-link.
     """
-    # Elicit on fully ambiguous input — a recipe note with no media is valid,
-    # but it is worth confirming the caller really wants a text-only note when
-    # both media URLs are empty (the common cause is a dropped/forgotten URL).
-    if ctx is not None and not image_url and not video_url:
-        try:
-            answer = await ctx.elicit(
-                "No image_url or video_url provided — create a text-only recipe "
-                "note? Reply 'yes' to proceed, or provide a media URL.",
-                response_type=str,
-            )
-            if getattr(answer, "action", "accept") == "decline":
-                raise ToolError("Recipe note creation declined — no media supplied.")
-        except ToolError:
-            raise
-        except Exception:
-            # Client doesn't support elicitation — fall through and create the
-            # text-only note rather than failing.
-            logger.debug("Elicitation unavailable; proceeding with text-only recipe note")
+    # A recipe note with no media is valid, but both URLs empty is usually a
+    # dropped URL: confirm. Decline, cancel or "no" aborts (C5).
+    if not image_url and not video_url and not await _confirm(
+        ctx, "No image_url or video_url provided. Create a text-only recipe note?"
+    ):
+        raise ToolError("Recipe note creation declined; no media supplied.")
 
     media_files: list[str] = []
     http_server = None
-    total_stages = 1 + (1 if image_url else 0) + (1 if video_url else 0)
-    stage = 0
-
-    async def _progress(message: str) -> None:
-        nonlocal stage
-        stage += 1
-        if ctx is not None:
-            await ctx.info(message)
-            await ctx.report_progress(progress=stage, total=total_stages)
-
     try:
         # Download media from remote URLs to local temp files
         if image_url:
-            await _progress("Downloading cover image")
             img_path = await asyncio.to_thread(_download_to_temp, image_url, ".jpg")
             media_files.append(img_path)
 
         if video_url:
-            await _progress("Downloading video (yt-dlp; may transcode VP9 -> H.264)")
             vid_path = await asyncio.to_thread(_download_to_temp, video_url, ".mp4")
             media_files.append(vid_path)
 
@@ -866,7 +839,6 @@ async def tool_create_recipe_note(
                 vid_file = media_files[-1]
                 payload["videoPath"] = f"http://127.0.0.1:18765/{Path(vid_file).name}"
 
-        await _progress("Running 'Sammler Recipe Note' Shortcut")
         result = await asyncio.to_thread(_run_shortcut, payload)
         if result.get("success"):
             # Augment the shortcut result with an applenotes:// deep-link.
@@ -1034,9 +1006,6 @@ def main():
             port=port,
             path="/mcp",
             stateless_http=True,
-            # fastmcp >=3.4.3 rejects non-localhost Host with 421 unless allowed_hosts
-            # set (edge is CF-Access/Tailscale gated). Requires fastmcp>=3.4.3.
-            allowed_hosts=["*"],
         )
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
