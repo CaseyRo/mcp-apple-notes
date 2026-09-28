@@ -1,42 +1,73 @@
 # mcp-apple-notes
 
-MCP server for Apple Notes on macOS. Read, search, and create notes via NoteStore SQLite and AppleScript.
+An MCP server that gives AI assistants access to Apple Notes on a Mac. Reads and searches go straight to the local `NoteStore.sqlite` database (read-only, fast); creating, moving and deleting notes goes through AppleScript. It is for people who keep their notes in Apple Notes and want Claude, or any other MCP client, to find, read and file them.
+
+## Requirements
+
+- macOS with Apple Notes
+- Python 3.11 or newer (the repo pins 3.12 in `.python-version`) and [uv](https://docs.astral.sh/uv/)
+- FastMCP 4 (`fastmcp>=4.0.10,<5.0.0`, installed by `uv sync`)
+- Full Disk Access for the Python interpreter that runs the server (to read `NoteStore.sqlite`)
+- Automation permission for Notes.app (for the AppleScript write tools)
+- For `create_recipe_note` only: a macOS Shortcut named "Sammler Recipe Note" that accepts a JSON payload
 
 ## Install
 
-Install from source (the `mcp-apple-notes` package on PyPI is a stale 0.1.2; releases are git tags only):
+Install from source. The `mcp-apple-notes` package on PyPI is a stale 0.1.2; releases are git tags only.
 
 ```bash
 git clone https://github.com/CaseyRo/mcp-apple-notes.git
 cd mcp-apple-notes
 uv sync
+cp .env.example .env   # then set APPLE_NOTES_MCP_API_KEY
 ```
-
-## Configuration
-
-Copy `.env.example` to `.env` and set your API key:
-
-```bash
-APPLE_NOTES_MCP_API_KEY=your-secret-key
-```
-
-Optional settings:
-
-```bash
-APPLE_NOTES_MCP_HOST=127.0.0.1      # default (loopback only)
-APPLE_NOTES_MCP_PORT=8010           # default
-APPLE_NOTES_DB_PATH=~/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite  # default
-```
-
-Without an API key, the server refuses to bind to anything other than loopback. To expose it on a non-loopback address you must set `APPLE_NOTES_MCP_API_KEY`.
 
 ## Run
 
 ```bash
-mcp-apple-notes
+uv run mcp-apple-notes
 ```
 
-The server starts on `http://127.0.0.1:8010/mcp` using streamable-http transport.
+The server listens on `http://127.0.0.1:8010/mcp` (streamable HTTP, stateless). `GET /health` and `GET /healthz` return a small JSON status document without authentication.
+
+### Run under launchd
+
+The server has to run as a native macOS process (not in Docker) because it needs the Notes database and AppleScript. To keep it running, add a LaunchAgent such as `~/Library/LaunchAgents/com.example.mcp-apple-notes.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.example.mcp-apple-notes</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/mcp-apple-notes/.venv/bin/python</string>
+    <string>-m</string><string>mcp_apple_notes</string>
+  </array>
+  <key>WorkingDirectory</key><string>/path/to/mcp-apple-notes</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>
+```
+
+Load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.mcp-apple-notes.plist`. The working directory matters: settings are read from `.env` there. Grant Full Disk Access and Notes automation to that exact `.venv/bin/python`; macOS keys the grants to the interpreter binary.
+
+## Configuration
+
+Settings come from environment variables or a `.env` file in the working directory.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `APPLE_NOTES_MCP_API_KEY` | empty | Bearer token clients must send. Empty disables auth (loopback only). |
+| `APPLE_NOTES_MCP_HOST` | `127.0.0.1` | Bind address. |
+| `APPLE_NOTES_MCP_PORT` | `8010` | Listen port. |
+| `APPLE_NOTES_DB_PATH` | `~/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite` | Notes database to read. |
+
+## Authentication
+
+When `APPLE_NOTES_MCP_API_KEY` is set, every MCP request needs the header `Authorization: Bearer <key>`; the key is compared in constant time. Without a key the server runs unauthenticated, and it refuses to start if the host is anything other than a loopback address. To reach it from another machine, keep it on loopback and put an authenticating tunnel or reverse proxy in front of it.
 
 ## Tools
 
@@ -227,30 +258,43 @@ Notes with checklists are flagged (`has_checklist: true`) but individual checkli
 
 Attachment metadata (that they exist) is visible, but file contents, thumbnails, and inline image data are not surfaced through the tools.
 
-## Client configuration
+## Resources and prompts
 
-### Claude Code / n8n
+- Resources: `notes://stats`, `notes://folders`, `notes://tags` (the same data as `get_stats`, `list_folders` and `list_tags`).
+- Prompts: `capture_recipe`, `triage_notes`.
 
-Use `http://localhost:8010/mcp` with header `Authorization: Bearer <api-key>`.
+## Usage telemetry
 
-## Requirements
+A small middleware (`src/mcp_apple_notes/usage.py`) writes one JSON line per tool call to stderr: server name, tool name, duration, outcome and MCP protocol version. It never records arguments or results. Tool failures raise `ToolError`, so they are logged with `outcome: error`.
 
-- macOS with Apple Notes
-- Python 3.11+
-- Full Disk Access (for reading `NoteStore.sqlite`)
-- Automation permission for Notes.app (for AppleScript write tools)
+## Development
+
+```bash
+uv sync
+uv run pytest
+```
+
+The tests use synthetic SQLite fixtures and a patched reader, so they run on Linux without Notes. CI (`.github/workflows/ci.yml`) runs the same suite as the `test` check, which is required before a pull request can merge into `main`.
+
+## Releases
+
+Releases are git tags only. After a change lands on `main`, the release workflow runs the tests and a `pip-audit`, then pushes the next `v*` patch tag. No commit bumps the version in `pyproject.toml`.
 
 ## Credits
 
 The read-via-SQLite approach was inspired by research into several community Apple Notes MCP servers:
 
-- **[ailenshen/apple-notes-mcp](https://github.com/AilensHe/apple-notes-mcp)** — SQLite-first reads with HTML-to-Markdown conversion. Directly inspired the `NoteStoreReader` architecture and the protobuf text extraction approach.
-- **[sweetrb/apple-notes-mcp](https://github.com/sweetrb/apple-notes-mcp)** — Full CRUD with checklist state parsing from SQLite. Informed the tag entity discovery and stats tool design.
-- **[disco-trooper/apple-notes-mcp](https://github.com/nicholasgasior/apple-notes-mcp)** — Hybrid vector + FTS search with BM25 ranking. Inspired the FTS5 in-memory index approach (without the embedding model overhead).
-- **[sirmews/apple-notes-mcp](https://github.com/sirmews/apple-notes-mcp)** — Original Python SQLite reader that proved the approach was viable.
+- **[ailenshen/apple-notes-mcp](https://github.com/AilensHe/apple-notes-mcp)**: SQLite-first reads with HTML-to-Markdown conversion. Directly inspired the `NoteStoreReader` architecture and the protobuf text extraction approach.
+- **[sweetrb/apple-notes-mcp](https://github.com/sweetrb/apple-notes-mcp)**: Full CRUD with checklist state parsing from SQLite. Informed the tag entity discovery and stats tool design.
+- **[disco-trooper/apple-notes-mcp](https://github.com/nicholasgasior/apple-notes-mcp)**: Hybrid vector + FTS search with BM25 ranking. Inspired the FTS5 in-memory index approach (without the embedding model overhead).
+- **[sirmews/apple-notes-mcp](https://github.com/sirmews/apple-notes-mcp)**: Original Python SQLite reader that proved the approach was viable.
 
 NoteStore.sqlite schema documentation from [Swift Forensics](http://www.swiftforensics.com/2018/02/reading-notes-database-on-macos.html) and [Simon Willison's analysis](https://simonwillison.net/2021/Dec/9/notes-on-notesapp/).
 
+## Support
+
+If this server saves you time, you can [buy me a coffee](https://buymeacoffee.com/caseyberlin).
+
 ## License
 
-MIT
+MIT, see [LICENSE](LICENSE).
