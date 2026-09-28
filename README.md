@@ -4,16 +4,12 @@ MCP server for Apple Notes on macOS. Read, search, and create notes via NoteStor
 
 ## Install
 
-```bash
-pip install mcp-apple-notes
-```
-
-Or for development:
+Install from source (the `mcp-apple-notes` package on PyPI is a stale 0.1.2; releases are git tags only):
 
 ```bash
 git clone https://github.com/CaseyRo/mcp-apple-notes.git
 cd mcp-apple-notes
-pip install -e ".[dev]"
+uv sync
 ```
 
 ## Configuration
