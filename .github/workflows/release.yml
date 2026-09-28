@@ -34,6 +34,8 @@ jobs:
 
       - name: Test
         run: uv run pytest
+        env:
+          FASTMCP_MCP_CAMELCASE_COMPAT: "false"
 
       - name: Security audit (pip-audit)
         run: uvx pip-audit

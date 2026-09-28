@@ -3,7 +3,7 @@
 Verify the additive changes hold the backward-compatibility line:
   - every existing tool name + parameter set is preserved (no ctx leak),
   - every tool carries annotations + an output schema,
-  - read tools are readOnlyHint, delete_note is destructiveHint,
+  - read tools are read_only_hint, delete_note is destructive_hint,
   - the new resources and prompts are registered,
   - the structured-output models accept the reader's dict shapes.
 
@@ -89,17 +89,17 @@ def test_every_tool_has_annotations_and_output_schema() -> None:
 def test_read_tools_are_readonly() -> None:
     tools = _tools_by_name()
     for name in _READ_TOOLS:
-        assert tools[name].annotations.readOnlyHint is True, f"{name} not readOnly"
+        assert tools[name].annotations.read_only_hint is True, f"{name} not readOnly"
 
 
 def test_delete_is_destructive_and_idempotent() -> None:
     tools = _tools_by_name()
     delete = tools["delete_note"].annotations
-    assert delete.destructiveHint is True
-    assert delete.idempotentHint is True
+    assert delete.destructive_hint is True
+    assert delete.idempotent_hint is True
     move = tools["move_note"].annotations
-    assert move.destructiveHint is False
-    assert move.idempotentHint is True
+    assert move.destructive_hint is False
+    assert move.idempotent_hint is True
 
 
 def test_resources_registered() -> None:

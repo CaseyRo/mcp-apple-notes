@@ -6,7 +6,7 @@ supports it*, and must degrade gracefully everywhere else:
 
   - no Context (e.g. a client that never passes one) -> delete proceeds,
   - Context present but elicitation unsupported (ctx.elicit raises) -> delete
-    proceeds (destructiveHint is the safety net),
+    proceeds (destructive_hint is the safety net),
   - user accepts -> delete proceeds,
   - user declines / cancels -> nothing is deleted, a clear cancelled
     WriteResult is returned (success=False, error set), NO opaque raise.
@@ -26,7 +26,12 @@ os.environ.setdefault("APPLE_NOTES_MCP_HOST", "127.0.0.1")
 os.environ.setdefault("APPLE_NOTES_MCP_API_KEY", "")
 
 from mcp_apple_notes import server  # noqa: E402
-from mcp_apple_notes.server import WriteResult, tool_delete_note  # noqa: E402
+from fastmcp.exceptions import ToolError  # noqa: E402
+from mcp_apple_notes.server import (  # noqa: E402
+    WriteResult,
+    tool_create_recipe_note,
+    tool_delete_note,
+)
 
 
 class _Answer:
@@ -47,16 +52,14 @@ class _FakeCtx:
     def __init__(self, elicit_action: str):
         self._elicit_action = elicit_action
         self.elicit_calls = 0
-        self.info_messages: list[str] = []
 
     async def elicit(self, message, response_type=str):
         self.elicit_calls += 1
         if self._elicit_action == "unsupported":
             raise RuntimeError("Client does not support elicitation")
+        if self._elicit_action == "hang":
+            await asyncio.Event().wait()
         return _Answer(self._elicit_action)
-
-    async def info(self, message):
-        self.info_messages.append(message)
 
 
 @pytest.fixture
@@ -135,3 +138,23 @@ def test_write_result_validates_error_payload():
     bare = WriteResult(success=False, error="boom")
     assert bare.note_id is None
     assert bare.error == "boom"
+
+
+def test_delete_proceeds_when_elicit_never_answers(captured_delete, monkeypatch):
+    """An elicit that hangs (portal, CDI-1551) is bounded; the delete proceeds."""
+    monkeypatch.setattr(server, "_ELICIT_TIMEOUT_S", 0.05)
+    ctx = _FakeCtx("hang")
+    result = asyncio.run(tool_delete_note(note_id=51, ctx=ctx))
+    assert result.success is True
+    assert captured_delete == [51]
+
+
+@pytest.mark.parametrize("action", ["decline", "cancel"])
+def test_text_only_recipe_aborts_on_decline_or_cancel(monkeypatch, action):
+    """C5: cancel is treated like decline; the Shortcut never runs."""
+    ran: list[dict] = []
+    monkeypatch.setattr(server, "_run_shortcut", lambda p: ran.append(p) or {"success": True})
+    ctx = _FakeCtx(action)
+    with pytest.raises(ToolError, match="declined"):
+        asyncio.run(tool_create_recipe_note(title="Soup", body_html="<p>x</p>", ctx=ctx))
+    assert ran == []
