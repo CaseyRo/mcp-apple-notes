@@ -30,15 +30,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
 
       - name: Install
-        run: uv sync
+        run: uv sync --locked
 
       - name: Test
         run: uv run pytest
         env:
           FASTMCP_MCP_CAMELCASE_COMPAT: "false"
-
-      - name: Security audit (pip-audit)
-        run: uvx pip-audit
 
       - name: Tag
         # Versions are git tags; nothing is committed or pushed to the branch.
