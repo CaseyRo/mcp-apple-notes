@@ -66,7 +66,7 @@ and nothing restarts it. Update by hand, and only from a clean default branch:
     uv sync --locked                  # keeps .python-version (3.12.11): do NOT change it
     launchctl kickstart -k gui/501/de.cdit.mcp-apple-notes
     launchctl print gui/501/de.cdit.mcp-apple-notes | grep -E 'pid =|state ='
-    curl -s http://100.93.89.102:8010/health
+    curl -s http://<cc1-tailnet-ip>:8010/health
     tail -n 50 ~/Library/Logs/mcp-apple-notes.err.log
 
 Never `pkill -f` this server. A `pkill -f` pattern has matched and killed the live
