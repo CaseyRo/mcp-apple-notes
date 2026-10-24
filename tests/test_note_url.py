@@ -7,11 +7,9 @@ run without a live Apple Notes installation.
 from __future__ import annotations
 
 import sqlite3
-import gzip
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import pytest
 
 from mcp_apple_notes.notestore import NoteStoreReader
 

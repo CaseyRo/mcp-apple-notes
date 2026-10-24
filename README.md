@@ -54,6 +54,31 @@ The server has to run as a native macOS process (not in Docker) because it needs
 
 Load it with `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.mcp-apple-notes.plist`. The working directory matters: settings are read from `.env` there. Grant Full Disk Access and Notes automation to that exact `.venv/bin/python`; macOS keys the grants to the interpreter binary.
 
+## Update runbook (launchd, cc1)
+
+A merge to `main` does **not** deploy this server: launchd runs the live checkout,
+and nothing restarts it. Update by hand, and only from a clean default branch:
+
+    cd /Users/caseyromkes/dev/CDiT-infrastructure/mcp/mcp-apple-notes
+    git status --porcelain            # must print nothing
+    git branch --show-current         # must be main
+    git pull --ff-only
+    uv sync --locked                  # keeps .python-version (3.12.11): do NOT change it
+    launchctl kickstart -k gui/501/de.cdit.mcp-apple-notes
+    launchctl print gui/501/de.cdit.mcp-apple-notes | grep -E 'pid =|state ='
+    curl -s http://100.93.89.102:8010/health
+    tail -n 50 ~/Library/Logs/mcp-apple-notes.err.log
+
+Never `pkill -f` this server. A `pkill -f` pattern has matched and killed the live
+sibling service before. Use `launchctl kickstart` only.
+
+If a tool call **hangs** after the restart (osascript waits forever), the Notes
+Automation / Full Disk Access grant has moved off the interpreter. Roll back to the
+previous checkout and restart:
+
+    git checkout <previous-sha> && uv sync --locked
+    launchctl kickstart -k gui/501/de.cdit.mcp-apple-notes
+
 ## Configuration
 
 Settings come from environment variables or a `.env` file in the working directory.
