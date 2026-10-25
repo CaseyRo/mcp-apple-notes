@@ -335,6 +335,29 @@ class NoteStoreReader:
         finally:
             conn.close()
 
+    def rewrite_losses(self, note_id: int) -> list[str]:
+        """What an AppleScript body rewrite would lose that AppleScript can't see.
+
+        Checklist ticks and real (inline) tags don't survive a rewrite. A missing
+        row gives []: Notes may not have flushed a just-created note yet, and the
+        AppleScript side reports a note that is really gone.
+        """
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT ZHASCHECKLIST FROM ZICCLOUDSYNCINGOBJECT WHERE Z_PK = ? AND Z_ENT = ?",
+                (note_id, _ENT_NOTE),
+            ).fetchone()
+        finally:
+            conn.close()
+        losses = []
+        if row and row["ZHASCHECKLIST"]:
+            losses.append("a checklist")
+        tags = self.get_note_tags(note_id)
+        if tags:
+            losses.append("tags (" + ", ".join(tags) + ")")
+        return losses
+
     def search_by_tag(self, tag: str, limit: int = 50) -> list[dict]:
         """Find all notes with a specific hashtag."""
         conn = self._connect()
