@@ -45,6 +45,8 @@ _EXPECTED_PARAMS = {
     "search_notes": {"query", "limit"},
     "get_stats": set(),
     "move_note": {"note_id", "folder"},
+    "update_note": {"note_id", "body"},
+    "append_to_note": {"note_id", "text"},
     "delete_note": {"note_id"},
 }
 

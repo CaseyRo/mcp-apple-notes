@@ -27,6 +27,8 @@ EXPECTED_TOOLS = {
     "list_notes",
     "get_note",
     "search_notes",
+    "update_note",
+    "append_to_note",
     "delete_note",
 }
 

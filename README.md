@@ -1,6 +1,6 @@
 # mcp-apple-notes
 
-An MCP server that gives AI assistants access to Apple Notes on a Mac. Reads and searches go straight to the local `NoteStore.sqlite` database (read-only, fast); creating, moving and deleting notes goes through AppleScript. It is for people who keep their notes in Apple Notes and want Claude, or any other MCP client, to find, read and file them.
+An MCP server that gives AI assistants access to Apple Notes on a Mac. Reads and searches go straight to the local `NoteStore.sqlite` database (read-only, fast); creating, editing, moving and deleting notes goes through AppleScript. It is for people who keep their notes in Apple Notes and want Claude, or any other MCP client, to find, read and file them.
 
 ## Requirements
 
@@ -193,6 +193,30 @@ Create a recipe note with optional image and video via the "Sammler Recipe Note"
 
 **Returns:** `{ success, title }`
 
+#### `update_note`
+
+Replace a note's body in place. The note keeps its title (as the heading, the way `create_note` writes it), its `note_id` and its folder. Annotated non-destructive and idempotent.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `note_id` | int | The numeric note ID |
+| `body` | str | The new body as HTML, without the title |
+
+**Returns:** `{ success, note_id, title }`
+
+#### `append_to_note`
+
+Add HTML as a new block at the end of a note, keeping what is already there. Annotated non-destructive, not idempotent.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `note_id` | int | The numeric note ID |
+| `text` | str | The text to add, as HTML (non-empty) |
+
+**Returns:** `{ success, note_id, title }`
+
+Both refuse, change nothing and raise a tool error when the note is missing, locked, or holds content a rewrite would lose (see [Body edits are whole-body rewrites](#body-edits-are-whole-body-rewrites)).
+
 ### Management tools (AppleScript-backed)
 
 #### `move_note`
@@ -227,7 +251,8 @@ Move a note to Recently Deleted.
                  │           │
           ┌──────┴──────┐   ├── create_note()
           │ NoteStore   │   ├── get_note_html()
-          │ Reader      │   ├── move_note()
+          │ Reader      │   ├── update_note() / append_to_note()
+          │             │   ├── move_note()
           │             │   └── delete_note()
           ├─ list_folders()
           ├─ list_notes()
@@ -271,9 +296,9 @@ Tags in Apple Notes are stored as inline attachment entities in the protobuf lay
 
 The only viable path for programmatic tag creation is a custom macOS Shortcut using the native "Add Tags to Notes" action, called via `shortcuts run`. This is not yet implemented.
 
-### Notes are read-only at the body level
+### Body edits are whole-body rewrites
 
-The server can read note content but cannot update existing note bodies. Apple Notes uses an undocumented protobuf format (CRDT-based `ZMERGEABLEDATA`) for the canonical note body. AppleScript's `body` property returns a simplified HTML rendering and setting it overwrites formatting.
+Apple Notes keeps the canonical body in an undocumented protobuf format (CRDT-based `ZMERGEABLEDATA`). AppleScript only offers the `body` property, a simplified HTML rendering, so `update_note` and `append_to_note` rewrite the whole body; there is no partial edit. Notes does not take back all the HTML it hands out: a rewrite destroys attachments (images, files, scans, tables), clears checklist ticks, turns tags into plain text, strips link URLs and restyles headings as bold text (measured by [pyapple-mcp](https://github.com/54yyyu/pyapple-mcp#notes-editing-refuses-more-than-it-accepts)). So both tools refuse a note holding attachments, a checklist or tags, `append_to_note` also refuses one with links or headings, and both refuse locked notes. A refused note is left exactly as it was.
 
 ### Checklist state is not parsed
 

@@ -23,7 +23,7 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.auth import AccessToken, TokenVerifier
 
 from .config import get_settings
-from .applescript_bridge import create_note, move_note, delete_note
+from .applescript_bridge import append_to_note, create_note, delete_note, move_note, update_note
 from .notestore import NoteStoreReader
 from .usage import UsageMiddleware
 
@@ -100,6 +100,9 @@ def _create_server() -> FastMCP:
             "    from any list/search result.\n"
             "  - Create plain text: create_note. Create a rich recipe note with\n"
             "    image/video attachments: create_recipe_note.\n"
+            "  - Edit in place: update_note (replace the body) or append_to_note\n"
+            "    (add to the end). Never delete + recreate to edit; when these\n"
+            "    refuse a note, leave it for the user to edit in Notes.\n"
             "  - Reorganize: move_note. Remove: delete_note (-> Recently Deleted).\n\n"
             "All note_id values are the numeric Z_PK from NoteStore; identifiers "
             "are UUIDs used for applenotes:// deep-links. Read tools are "
@@ -602,6 +605,89 @@ async def tool_move_note(note_id: int, folder: str) -> WriteResult:
         logger.exception("move_note failed")
         raise ToolError(f"Failed to move note {note_id} to {folder!r}: {e}") from e
     return WriteResult(**result)
+
+
+async def _edit(action: str, edit, note_id: int, html: str) -> WriteResult:
+    try:
+        result = await asyncio.to_thread(edit, note_id, html)
+    except ValueError as e:
+        # Missing, locked, or refused because the rewrite would lose content.
+        raise ToolError(str(e)) from e
+    except Exception as e:
+        logger.exception("%s failed", action)
+        raise ToolError(f"Failed to {action} note {note_id}: {e}") from e
+    return WriteResult(**result)
+
+
+@mcp.tool(
+    name="update_note",
+    title="Update Note",
+    tags={"write"},
+    annotations={
+        "title": "Update Note",
+        "read_only_hint": False,
+        "destructive_hint": False,
+        # The same body twice leaves the same note.
+        "idempotent_hint": True,
+        "open_world_hint": True,
+    },
+)
+async def tool_update_note(note_id: int, body: str) -> WriteResult:
+    """[notes] Replace a note's body in place; title, note_id and folder stay.
+
+    Use this, not delete_note + create_note, to rewrite a note. ``body`` is
+    everything below the title, as in create_note: HTML (<div>, <br>, <b>,
+    <ul>), raw newlines are dropped. The current title stays as the heading.
+
+    Nothing is changed, and you get a tool error, when the note is missing,
+    locked, or holds content Notes cannot write back through AppleScript
+    (every edit rewrites the whole body): attachments (images, files, scans,
+    tables), a checklist or tags.
+
+    Args:
+        note_id: The numeric note ID (from list_notes, search_notes or get_note).
+        body: The new body as HTML, without the title.
+
+    Returns:
+        A WriteResult with success, note_id and the note's title.
+    """
+    return await _edit("update", update_note, note_id, body)
+
+
+@mcp.tool(
+    name="append_to_note",
+    title="Append to Note",
+    tags={"write"},
+    annotations={
+        "title": "Append to Note",
+        "read_only_hint": False,
+        "destructive_hint": False,
+        # Each call adds the text again.
+        "idempotent_hint": False,
+        "open_world_hint": True,
+    },
+)
+async def tool_append_to_note(
+    note_id: int, text: Annotated[str, Field(min_length=1)]
+) -> WriteResult:
+    """[notes] Append text to the end of a note, keeping what is already there.
+
+    ``text`` is HTML like create_note's body and lands as a new block at the
+    end; raw newlines are dropped, so use <br> or separate <div>s.
+
+    Nothing is changed, and you get a tool error, when the note is missing,
+    locked, or holds content Notes cannot write back through AppleScript
+    (an append rewrites the whole body): attachments (images, files, scans,
+    tables), a checklist, tags, links or headings.
+
+    Args:
+        note_id: The numeric note ID (from list_notes, search_notes or get_note).
+        text: The text to add, as HTML.
+
+    Returns:
+        A WriteResult with success, note_id and the note's title.
+    """
+    return await _edit("append to", append_to_note, note_id, text)
 
 
 @mcp.tool(
