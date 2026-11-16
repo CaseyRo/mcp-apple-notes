@@ -60,6 +60,12 @@ class NoteStoreReader:
         return conn
 
     @staticmethod
+    def _hidden_folder_clause(conn: sqlite3.Connection) -> str:
+        """Exclude hidden note containers when the schema has the column (gone in macOS 27)."""
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(ZICCLOUDSYNCINGOBJECT)")}
+        return "AND ZISHIDDENNOTECONTAINER != 1" if "ZISHIDDENNOTECONTAINER" in cols else ""
+
+    @staticmethod
     def _coredata_to_iso(timestamp: float | None) -> str | None:
         """Convert a Core Data timestamp to an ISO 8601 string."""
         if timestamp is None:
@@ -109,12 +115,12 @@ class NoteStoreReader:
         try:
             # Get all folders
             folders_raw = conn.execute(
-                """
+                f"""
                 SELECT Z_PK, ZTITLE2, ZPARENT, ZIDENTIFIER
                 FROM ZICCLOUDSYNCINGOBJECT
                 WHERE Z_ENT = ?
                   AND ZMARKEDFORDELETION = 0
-                  AND ZISHIDDENNOTECONTAINER != 1
+                  {self._hidden_folder_clause(conn)}
                   AND (ZFOLDERTYPE IS NULL OR ZFOLDERTYPE != 1)
                 ORDER BY ZTITLE2
                 """,
@@ -526,7 +532,7 @@ class NoteStoreReader:
             ).fetchone()[0]
 
             folder_count = conn.execute(
-                "SELECT COUNT(*) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_ENT = ? AND ZMARKEDFORDELETION = 0 AND ZISHIDDENNOTECONTAINER != 1 AND (ZFOLDERTYPE IS NULL OR ZFOLDERTYPE != 1)",
+                f"SELECT COUNT(*) FROM ZICCLOUDSYNCINGOBJECT WHERE Z_ENT = ? AND ZMARKEDFORDELETION = 0 {self._hidden_folder_clause(conn)} AND (ZFOLDERTYPE IS NULL OR ZFOLDERTYPE != 1)",
                 (_ENT_FOLDER,),
             ).fetchone()[0]
 
